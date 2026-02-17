@@ -171,7 +171,7 @@ static RenderRequest renderer_generate_request(Renderer *renderer, Viewer *viewe
     if (needs_rerender) {
         const bool visible_pages_subset_of_last =
             scale_invariant &&
-            (renderer->last_visible_pages_before < visible_pages_before ||
+            (renderer->last_visible_pages_before < visible_pages_before &&
             visible_pages_after < renderer->last_visible_pages_after);
         const bool scrolling_down =
             scale_invariant &&
