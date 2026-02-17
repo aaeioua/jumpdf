@@ -117,10 +117,8 @@ void renderer_render_pages(Renderer *renderer, Viewer *viewer, int from, int to)
 static void renderer_draw_page(cairo_t *cr, Viewer *viewer, int page_idx, double *base)
 {
     Page *page = viewer->info->pages[page_idx];
-
-    if (page->render_status == PAGE_NOT_RENDERED) {
-        return;
-    }
+    cairo_surface_t *surface = NULL;
+    bool is_surface_temporary = FALSE;
 
     double page_width, page_height;
     poppler_page_get_size(page->poppler_page, &page_width, &page_height);
@@ -128,10 +126,17 @@ static void renderer_draw_page(cairo_t *cr, Viewer *viewer, int page_idx, double
     page_height *= viewer->cursor->scale;
     double center_offset = round((viewer->info->max_page_width * viewer->cursor->scale - page_width) / 2.0);
 
-    g_mutex_lock(&page->render_mutex);
-    g_assert(page->surface != NULL);
-    cairo_set_source_surface(cr, page->surface, center_offset, *base);
-    g_mutex_unlock(&page->render_mutex);
+    if (page->render_status == PAGE_RENDERED) {
+        g_mutex_lock(&page->render_mutex);
+        g_assert(page->surface != NULL);
+        surface = page->surface;
+        g_mutex_unlock(&page->render_mutex);
+    } else if (page->render_status == PAGE_RENDERING) {
+        surface = create_loading_surface(page_width, page_height);
+        is_surface_temporary = true;
+    }
+
+    cairo_set_source_surface(cr, surface, center_offset, *base);
 
     if (page_idx > 0) {
         /* Draw page separator */
@@ -145,6 +150,10 @@ static void renderer_draw_page(cairo_t *cr, Viewer *viewer, int page_idx, double
     }
 
     cairo_paint(cr);
+
+    if (is_surface_temporary && surface != NULL) {
+        cairo_surface_destroy(surface);
+    }
 
     *base += page_height;
 }
@@ -209,7 +218,7 @@ static RenderRequest renderer_generate_request(Renderer *renderer, Viewer *viewe
         g_free(renderer->last_search_text);
         renderer->last_search_text = g_strdup(viewer->search->search_text);
     }
-    
+
     return request;
 }
 
@@ -260,15 +269,6 @@ static void renderer_queue_page_render(Renderer *renderer, Viewer *viewer, Page*
             g_free(data);
         } else {
             g_mutex_lock(&page->render_mutex);
-            if (page->surface == NULL) {
-                double width, height;
-                poppler_page_get_size(page->poppler_page, &width, &height);
-                double scaled_width = (int)(width * viewer->cursor->scale);
-                double scaled_height = (int)(height * viewer->cursor->scale);
-
-                page->surface = create_loading_surface(scaled_width, scaled_height);
-            }
-
             page->render_status = PAGE_RENDERING;
             g_mutex_unlock(&page->render_mutex);
         }
