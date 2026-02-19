@@ -126,14 +126,16 @@ static void renderer_draw_page(cairo_t *cr, Viewer *viewer, int page_idx, double
     page_height *= viewer->cursor->scale;
     double center_offset = round((viewer->info->max_page_width * viewer->cursor->scale - page_width) / 2.0);
 
-    if (page->render_status == PAGE_RENDERED) {
-        g_mutex_lock(&page->render_mutex);
+    gboolean is_page_unlocked = g_mutex_trylock(&page->render_mutex);
+    if (is_page_unlocked && page->render_status == PAGE_RENDERED) {
         g_assert(page->surface != NULL);
         surface = page->surface;
-        g_mutex_unlock(&page->render_mutex);
-    } else if (page->render_status == PAGE_RENDERING) {
+    } else {
         surface = create_loading_surface(page_width, page_height);
-        is_surface_temporary = true;
+        is_surface_temporary = TRUE;
+    }
+    if (is_page_unlocked) {
+        g_mutex_unlock(&page->render_mutex);
     }
 
     cairo_set_source_surface(cr, surface, center_offset, *base);
