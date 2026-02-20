@@ -269,10 +269,6 @@ static void renderer_queue_page_render(Renderer *renderer, Viewer *viewer, Page*
             g_warning("Failed to push render task to thread pool: %s", error->message);
             g_error_free(error);
             g_free(data);
-        } else {
-            g_mutex_lock(&page->render_mutex);
-            page->render_status = PAGE_RENDERING;
-            g_mutex_unlock(&page->render_mutex);
         }
     } else {
         g_mutex_unlock(&page->render_mutex);
@@ -303,6 +299,7 @@ static void render_page_async(gpointer data, gpointer user_data)
 
     g_mutex_lock(&page->render_mutex);
 
+    page->render_status = PAGE_RENDERING;
     renderer_render_page(renderer, viewer, cr, page->poppler_page, draw_links_from, draw_links_to);
 
     if (page->surface != NULL) {
