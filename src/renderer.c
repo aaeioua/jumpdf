@@ -233,13 +233,12 @@ static void renderer_reset_pages(Viewer *viewer, int from, int to)
     for (int i = from; i <= to; i++) {
         Page *page = viewer->info->pages[i];
 
-        g_mutex_lock(&page->render_mutex);
-        if (page->surface != NULL) {
-            cairo_surface_destroy(page->surface);
-            page->surface = NULL;
+        if (g_mutex_trylock(&page->render_mutex)) {
+            page_reset_render(page);
+            g_mutex_unlock(&page->render_mutex);
+        } else {
+            g_atomic_int_set(&page->reset_pending, 1);
         }
-        page->render_status = PAGE_NOT_RENDERED;
-        g_mutex_unlock(&page->render_mutex);
     }
 }
 
@@ -307,6 +306,11 @@ static void render_page_async(gpointer data, gpointer user_data)
     }
     page->surface = page_surface;
     page->render_status = PAGE_RENDERED;
+
+    if (g_atomic_int_get(&page->reset_pending)) {
+        page_reset_render(page);
+        g_atomic_int_set(&page->reset_pending, 0);
+    }
 
     g_mutex_unlock(&page->render_mutex);
 
