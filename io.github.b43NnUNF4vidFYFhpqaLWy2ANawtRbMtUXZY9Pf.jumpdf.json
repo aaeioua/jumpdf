@@ -1,7 +1,7 @@
 {
     "id": "io.github.b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf.jumpdf",
     "runtime": "org.gnome.Platform",
-    "runtime-version": "46",
+    "runtime-version": "49",
     "sdk": "org.gnome.Sdk",
     "command": "jumpdf",
     "finish-args": [
@@ -9,6 +9,12 @@
         "--socket=fallback-x11",
         "--socket=wayland",
         "--device=dri"
+    ],
+    "cleanup": [
+        "/include",
+        "/lib/cmake",
+        "/lib/pkgconfig",
+        "/share/man"
     ],
     "modules": [
         {
@@ -31,8 +37,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://poppler.freedesktop.org/poppler-24.11.0.tar.xz",
-                    "sha256": "7723d880565211740c13649d24a300257b86ddd7fa2d208187ff7e5cc8dfbd58"
+                    "url": "https://poppler.freedesktop.org/poppler-26.02.0.tar.xz",
+                    "sha256": "dded8621f7b2f695c91063aab1558691c8418374cd583501e89ed39487e7ab77"
                 }
             ],
             "modules": [
@@ -46,8 +52,8 @@
                     "sources": [
                         {
                             "type": "archive",
-                            "url": "https://boostorg.jfrog.io/artifactory/main/release/1.86.0/source/boost_1_86_0.tar.bz2",
-                            "sha256": "1bed88e40401b2cb7a1f76d4bab499e352fa4d0c5f31c0dbae64e24d34d7513b"
+                            "url": "https://archives.boost.io/release/1.90.0/source/boost_1_90_0.tar.bz2",
+                            "sha256": "49551aff3b22cbc5c5a9ed3dbc92f0e23ea50a0f7325b0d198b705e8ee3fc305"
                         }
                     ]
                 }
@@ -63,8 +69,8 @@
             "sources": [
                 {
                     "type": "git",
-                    "tag": "v1.1.0",
-                    "url": "https://github.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf.git"
+                    "tag": "v1.2.0",
+                    "url": "https://github.com/aaeioua/jumpdf.git"
                 }
             ]
         }

@@ -6,7 +6,7 @@
   <summary>PDF viewer</summary>
 
   <developer id="@developer_id@">
-    <name>b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf</name>
+    <name>aaeioua</name>
   </developer>
   
   <metadata_license>MIT</metadata_license>
@@ -24,19 +24,33 @@
   <screenshots>
     <screenshot type="default">
       <caption>A view of a document</caption>
-      <image>https://raw.githubusercontent.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf/main/data/screenshots/jumpdf.png</image>
+      <image>https://github.com/aaeioua/jumpdf/blob/4046c896f85becdb623465b72df0e8e899ba17c9/data/screenshots/jumpdf.png?raw=true</image>
     </screenshot>
     <screenshot>
       <caption>Dark mode</caption>
-      <image>https://raw.githubusercontent.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf/main/data/screenshots/jumpdf-dark.png</image>
+      <image>https://github.com/aaeioua/jumpdf/blob/4046c896f85becdb623465b72df0e8e899ba17c9/data/screenshots/jumpdf-dark.png?raw=true</image>
     </screenshot>
     <screenshot>
       <caption>Help menu</caption>
-      <image>https://raw.githubusercontent.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf/main/data/screenshots/jumpdf-help.png</image>
+      <image>https://github.com/aaeioua/jumpdf/blob/4046c896f85becdb623465b72df0e8e899ba17c9/data/screenshots/jumpdf-help.png?raw=true</image>
     </screenshot>
   </screenshots>
 
   <releases>
+    <release version="1.2.0" date="2026-03-13">
+      <description>
+        <ul>
+          <li>Queue pages for rendering when visible.</li>
+          <li>Avoid redundant rerenders.</li>
+          <li>Handle pages of different sizes.</li>
+          <li>Add arrow keys, page up/down keys, home key and end key as alternative keybinds.</li>
+          <li>Add keybinds to switch to previous mark/group, swap mark/group, overwrite group and repeat last command.</li>
+          <li>Add database versioning.</li>
+          <li>Delete cleared cursors from database.</li>
+          <li>Fix incorrect zooming calculations.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.0" date="2024-11-08">
       <description>
         <p>Changes:</p>
@@ -71,9 +85,9 @@
     </release>
   </releases>
 
-  <url type="homepage">https://github.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf</url>
-  <url type="vcs-browser">https://github.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf</url>
-  <url type="bugtracker">https://github.com/b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf/jumpdf/issues</url>
+  <url type="homepage">https://github.com/aaeioua/jumpdf</url>
+  <url type="vcs-browser">https://github.com/aaeioua/jumpdf</url>
+  <url type="bugtracker">https://github.com/aaeioua/jumpdf/issues</url>
   
   <launchable type="desktop-id">@app_id@.desktop</launchable>
   <provides>@app_id@.desktop</provides>
