@@ -18,7 +18,7 @@ void database_create_tables(Database *db);
 
 // Version
 int database_get_version(Database *db);
-void database_check_update(Database *db, const char *path);
+void database_check_update(Database *db);
 
 // Cursor
 sqlite3_int64 database_insert_cursor(Database *db, ViewerCursor *cursor);

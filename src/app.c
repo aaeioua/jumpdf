@@ -48,7 +48,7 @@ static void app_init(App *app)
     db_filename = g_build_filename(g_get_user_data_dir(), APP_NAME_STR, "jumpdf.db", NULL);
     ensure_path_exists(db_filename);
     app->db = database_open(db_filename);
-    database_check_update(app->db, db_filename);
+    database_check_update(app->db);
     g_free(db_filename);
 
     app->uri_mark_manager_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)viewer_mark_manager_destroy);
