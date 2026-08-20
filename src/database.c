@@ -10,6 +10,50 @@
 
 #define DATABASE_VERSION 1
 
+#define CREATE_TABLES_SQL \
+    "CREATE TABLE IF NOT EXISTS cursor (" \
+    "   id INTEGER PRIMARY KEY AUTOINCREMENT," \
+    "   current_page INTEGER NOT NULL," \
+    "   x_offset REAL NOT NULL," \
+    "   y_offset REAL NOT NULL," \
+    "   scale REAL NOT NULL," \
+    "   center_mode BOOLEAN NOT NULL," \
+    "   dark_mode BOOLEAN NOT NULL," \
+    "   input_number INTEGER NOT NULL" \
+    ");" \
+    "CREATE TABLE IF NOT EXISTS cursor_group (" \
+    "   id INTEGER PRIMARY KEY AUTOINCREMENT," \
+    "   current_mark INTEGER NOT NULL," \
+    "   previous_mark INTEGER NOT NULL" \
+    ");" \
+    "CREATE TABLE IF NOT EXISTS mark_manager (" \
+    "   uri TEXT PRIMARY KEY," \
+    "   current_group INTEGER NOT NULL," \
+    "   previous_group INTEGER NOT NULL" \
+    ");" \
+    "CREATE TABLE IF NOT EXISTS group_contains_cursor (" \
+    "   group_id INTEGER NOT NULL," \
+    "   cursor_id INTEGER NOT NULL," \
+    "   cursor_index INTEGER NOT NULL," \
+    "   PRIMARY KEY(group_id, cursor_index)," \
+    "   FOREIGN KEY(group_id) REFERENCES cursor_group(id)," \
+    "   FOREIGN KEY(cursor_id) REFERENCES cursor(id)" \
+    ");" \
+    "CREATE TABLE IF NOT EXISTS mark_manager_contains_group (" \
+    "   mark_manager_uri INTEGER NOT NULL," \
+    "   group_id INTEGER NOT NULL," \
+    "   group_index INTEGER NOT NULL," \
+    "   PRIMARY KEY(mark_manager_uri, group_index)," \
+    "   FOREIGN KEY(mark_manager_uri) REFERENCES mark_manager(uri)," \
+    "   FOREIGN KEY(group_id) REFERENCES cursor_group(id)" \
+    ");" \
+    "CREATE INDEX IF NOT EXISTS idx_cursor_id ON cursor(id);" \
+    "CREATE INDEX IF NOT EXISTS idx_cursor_group_id ON cursor_group(id);" \
+    "CREATE INDEX IF NOT EXISTS idx_mark_manager_uri ON mark_manager(uri);" \
+    "CREATE INDEX IF NOT EXISTS idx_group_contains_cursor_group_id_cursor_id ON group_contains_cursor(group_id, cursor_id);" \
+    "CREATE INDEX IF NOT EXISTS idx_mark_manager_contains_group_mark_manager_uri ON mark_manager_contains_group(mark_manager_uri);"
+
+static void database_recreate_tables(Database *db);
 static void database_printerr_stmt(Database *db, sqlite3_stmt *stmt);
 static void database_printerr_sql(Database *db, char *sql);
 
@@ -35,8 +79,11 @@ void database_init(Database *db, const char *path) {
     if (rc != SQLITE_OK) {
         g_printerr("database_init: %s\n", sqlite3_errmsg(db->handle));
         sqlite3_close(db->handle);
+        db->handle = NULL;
         return;
     }
+
+    sqlite3_busy_timeout(db->handle, 5000);
 }
 
 void database_close(Database *db)
@@ -48,6 +95,7 @@ void database_close(Database *db)
     }
 
     rc = sqlite3_close(db->handle);
+    db->handle = NULL;
     if (rc != SQLITE_OK) {
         g_printerr("database_close: %s\n", sqlite3_errmsg(db->handle));
     }
@@ -57,48 +105,7 @@ void database_create_tables(Database *db)
 {
     const char *sql =
         "PRAGMA user_version = " G_STRINGIFY(DATABASE_VERSION) ";"
-        "CREATE TABLE IF NOT EXISTS cursor ("
-        "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "   current_page INTEGER NOT NULL,"
-        "   x_offset REAL NOT NULL,"
-        "   y_offset REAL NOT NULL,"
-        "   scale REAL NOT NULL,"
-        "   center_mode BOOLEAN NOT NULL,"
-        "   dark_mode BOOLEAN NOT NULL,"
-        "   input_number INTEGER NOT NULL"
-        ");"
-        "CREATE TABLE IF NOT EXISTS cursor_group ("
-        "   id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "   current_mark INTEGER NOT NULL,"
-        "   previous_mark INTEGER NOT NULL"
-        ");"
-        "CREATE TABLE IF NOT EXISTS mark_manager ("
-        "   uri TEXT PRIMARY KEY,"
-        "   current_group INTEGER NOT NULL,"
-        "   previous_group INTEGER NOT NULL"
-        ");"
-        "CREATE TABLE IF NOT EXISTS group_contains_cursor ("
-        "   group_id INTEGER NOT NULL,"
-        "   cursor_id INTEGER NOT NULL,"
-        "   cursor_index INTEGER NOT NULL,"
-        "   PRIMARY KEY(group_id, cursor_index),"
-        "   FOREIGN KEY(group_id) REFERENCES cursor_group(id),"
-        "   FOREIGN KEY(cursor_id) REFERENCES cursor(id)"
-        ");"
-        "CREATE TABLE IF NOT EXISTS mark_manager_contains_group ("
-        "   mark_manager_uri INTEGER NOT NULL,"
-        "   group_id INTEGER NOT NULL,"
-        "   group_index INTEGER NOT NULL,"
-        "   PRIMARY KEY(mark_manager_uri, group_index),"
-        "   FOREIGN KEY(mark_manager_uri) REFERENCES mark_manager(uri),"
-        "   FOREIGN KEY(group_id) REFERENCES cursor_group(id)"
-        ");"
-        "CREATE INDEX IF NOT EXISTS idx_cursor_id ON cursor(id);"
-        "CREATE INDEX IF NOT EXISTS idx_cursor_group_id ON cursor_group(id);"
-        "CREATE INDEX IF NOT EXISTS idx_mark_manager_uri ON mark_manager(uri);"
-        "CREATE INDEX IF NOT EXISTS idx_group_contains_cursor_group_id_cursor_id ON group_contains_cursor(group_id, cursor_id);"
-        "CREATE INDEX IF NOT EXISTS idx_mark_manager_contains_group_mark_manager_uri ON mark_manager_contains_group(mark_manager_uri);"
-        ;
+        CREATE_TABLES_SQL;
     char *errmsg = NULL;
     int rc = sqlite3_exec(db->handle, sql, NULL, NULL, &errmsg);
 
@@ -133,17 +140,22 @@ int database_get_version(Database *db)
     return version;
 }
 
-void database_check_update(Database *db, const char *path)
+void database_check_update(Database *db)
 {
-    int version = database_get_version(db);
-    if (version != DATABASE_VERSION) {
-        g_print("Database version is %d, expected %d. Recreating database\n", version, DATABASE_VERSION);
+    if (db->handle == NULL) {
+        g_printerr("database_check_update: database handle is not open\n");
+        return;
+    }
 
-        database_close(db);
-        /* Dropping the database is acceptable, as it only serves to persist state */
-        remove(path);
-        database_init(db, path);
-        database_create_tables(db);
+    int version = database_get_version(db);
+
+    if (version < 0) {
+        g_printerr("database_check_update: failed to read the database version, "
+                   "leaving the database untouched\n");
+    } else if (version != DATABASE_VERSION) {
+        g_print("Database version is %d, expected %d. Recreating tables\n",
+            version, DATABASE_VERSION);
+        database_recreate_tables(db);
     }
 }
 
@@ -750,6 +762,29 @@ ViewerMarkGroup **database_get_mark_manager_groups(Database *db, const char *uri
     sqlite3_finalize(stmt);
 
     return groups;
+}
+
+static void database_recreate_tables(Database *db)
+{
+    char *errmsg = NULL;
+    int rc;
+
+    const char *sql =
+        "BEGIN TRANSACTION;"
+        "PRAGMA user_version = " G_STRINGIFY(DATABASE_VERSION) ";"
+        "DROP TABLE IF EXISTS group_contains_cursor;"
+        "DROP TABLE IF EXISTS mark_manager_contains_group;"
+        "DROP TABLE IF EXISTS cursor;"
+        "DROP TABLE IF EXISTS cursor_group;"
+        "DROP TABLE IF EXISTS mark_manager;"
+        CREATE_TABLES_SQL
+        "COMMIT;";
+
+    rc = sqlite3_exec(db->handle, sql, NULL, NULL, &errmsg);
+    if (rc != SQLITE_OK) {
+        g_printerr("database_recreate_tables: %s\n", errmsg);
+        sqlite3_free(errmsg);
+    }
 }
 
 static void database_printerr_stmt(Database *db, sqlite3_stmt *stmt)
