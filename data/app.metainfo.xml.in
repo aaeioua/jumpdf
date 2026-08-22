@@ -37,6 +37,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.2.1" date="2026-08-22">
+      <description>
+        Fix database getting deleted on rare race condition.
+      </description>
+    </release>
     <release version="1.2.0" date="2026-03-13">
       <description>
         <ul>
