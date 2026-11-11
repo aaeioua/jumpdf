@@ -567,7 +567,7 @@ static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
         win->first_draw = FALSE;
     }
     
-    renderer_draw(cr, win->viewer);
+    renderer_draw(win->renderer, cr, win->viewer);
 }
 
 static void window_populate_toc(Window *win)
