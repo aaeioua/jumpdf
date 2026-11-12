@@ -66,7 +66,7 @@ void scroll_left(struct Viewer *viewer, unsigned int repeat_count, void *data)
     UNUSED(data);
 
     for (unsigned int i = 0; i < repeat_count; i++) {
-        viewer->cursor->x_offset--;
+        viewer->cursor->x_offset++;
     }
 }
 
@@ -93,7 +93,7 @@ void scroll_right(struct Viewer *viewer, unsigned int repeat_count, void *data)
     UNUSED(data);
 
     for (unsigned int i = 0; i < repeat_count; i++) {
-        viewer->cursor->x_offset++;
+        viewer->cursor->x_offset--;
     }
 }
 
