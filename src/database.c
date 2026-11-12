@@ -294,7 +294,7 @@ ViewerCursor *database_get_cursor(Database *db, int id)
         dark_mode = sqlite3_column_int(stmt, 5);
         input_number = sqlite3_column_int(stmt, 6);
 
-        cursor = viewer_cursor_new(NULL, current_page, x_offset, y_offset, scale, center_mode, dark_mode, input_number);
+        cursor = viewer_cursor_new(current_page, x_offset, y_offset, scale, center_mode, dark_mode, input_number);
     } else {
         database_printerr_stmt(db, stmt);
     }

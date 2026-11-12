@@ -83,19 +83,23 @@ static void app_open(GApplication *app, GFile **files, int n_files,
 {
     UNUSED(hint);
 
+    ViewerInfo *info;
     ViewerMarkManager *mark_manager;
     Window *win;
     GPtrArray *new_windows = g_ptr_array_sized_new(n_files);
 
     for (int i = 0; i < n_files; i++) {
-        mark_manager = app_get_mark_manager(JUMPDF_APP(app), files[i]);
-        if (mark_manager != NULL) {
-            win = window_new(JUMPDF_APP(app));
-            g_ptr_array_add(new_windows, win);
-
-            window_open(win, files[i], mark_manager);
-            gtk_window_present(GTK_WINDOW(win));
+        info = viewer_info_new_from_gfile(files[i]);
+        if (info == NULL) {
+            continue;
         }
+
+        mark_manager = app_get_mark_manager(JUMPDF_APP(app), files[i]);
+        win = window_new(JUMPDF_APP(app));
+        g_ptr_array_add(new_windows, win);
+
+        window_open(win, files[i], mark_manager, info);
+        gtk_window_present(GTK_WINDOW(win));
     }
 
     g_ptr_array_extend_and_steal(JUMPDF_APP(app)->windows, new_windows);
@@ -117,20 +121,12 @@ App *app_new(void)
 ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
 {
     char *uri = NULL;
-    ViewerInfo *info = NULL;
     ViewerMarkGroup **groups = NULL;
     ViewerCursor **default_cursors = NULL;
     ViewerCursor *default_cursor = NULL;
-    ViewerCursor *cursor = NULL;
     ViewerMarkManager *mark_manager = NULL;
     ViewerMarkManager *mark_manager_memory = NULL;
     ViewerMarkManager *mark_manager_db = NULL;
-
-    info = viewer_info_new_from_gfile(file);
-    if (info == NULL) {
-        g_free(uri);
-        return NULL;
-    }
 
     uri = g_file_get_uri(file);
     mark_manager_memory = g_hash_table_lookup(JUMPDF_APP(app)->uri_mark_manager_map, uri);
@@ -162,21 +158,13 @@ ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
         g_hash_table_insert(JUMPDF_APP(app)->uri_mark_manager_map,
             uri, mark_manager);
     } else {
-        // Copy to have the same groups and marks, but different selections 
+        // Copy to have the same groups and marks, but different selections
         mark_manager = viewer_mark_manager_copy(mark_manager_memory);
-    }
-
-    for (unsigned int j = 0; j < NUM_GROUPS; j++) {
-        for (unsigned int k = 0; k < NUM_MARKS; k++) {
-            cursor = viewer_mark_manager_get_mark(mark_manager, j, k);
-            if (cursor != NULL) {
-                cursor->info = info;
-            }
-        }
+        g_free(uri);
     }
 
     if (viewer_mark_manager_get_current_cursor(mark_manager) == NULL) {
-        default_cursor = viewer_cursor_new(info, 0, 0.0, 0.0, 1.0, TRUE, FALSE, 0);
+        default_cursor = viewer_cursor_new(0, 0.0, 0.0, 1.0, TRUE, FALSE, 0);
         viewer_mark_manager_set_mark(mark_manager, viewer_cursor_copy(default_cursor),
             viewer_mark_manager_get_current_group_index(mark_manager),
             viewer_mark_manager_get_current_mark_index(mark_manager));

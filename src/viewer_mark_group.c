@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "viewer_mark_group.h"
 
 ViewerMarkGroup *viewer_mark_group_new(ViewerCursor *marks[NUM_MARKS], unsigned int current_mark, unsigned int previous_mark)

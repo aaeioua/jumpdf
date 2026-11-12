@@ -11,7 +11,8 @@ typedef struct _App App;
 G_DECLARE_FINAL_TYPE(Window, window, JUMPDF, WINDOW, GtkApplicationWindow)
 
 Window *window_new(App *app);
-void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager);
+void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
+    ViewerInfo *info);
 
 void window_update_cursor(Window *win);
 void window_redraw(Window *win);

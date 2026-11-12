@@ -14,6 +14,7 @@ sources = [
     'page.c',
     'viewer_info.c',
     'viewer_cursor.c',
+    'viewport.c',
     'viewer_search.c',
     'viewer_links.c',
     'viewer_mark_group.c',

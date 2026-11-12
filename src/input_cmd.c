@@ -108,7 +108,8 @@ void forward_search(struct Viewer *viewer, unsigned int repeat_count, void *data
 
     for (unsigned int i = 0; i < repeat_count; i++) {
         last_search_cursor = search_new_cursor;
-        search_new_cursor = viewer_search_get_next_search(viewer->search, search_new_cursor);
+        search_new_cursor = viewer_search_get_next_search(viewer->search, viewer->info,
+            viewer->viewport, search_new_cursor);
         if (search_new_cursor == NULL) {
             resulting_cursor = last_search_cursor;
             break;
@@ -133,7 +134,8 @@ void backward_search(struct Viewer *viewer, unsigned int repeat_count, void *dat
 
     for (unsigned int i = 0; i < repeat_count; i++) {
         last_search_cursor = search_new_cursor;
-        search_new_cursor = viewer_search_get_prev_search(viewer->search, search_new_cursor);
+        search_new_cursor = viewer_search_get_prev_search(viewer->search, viewer->info,
+            viewer->viewport, search_new_cursor);
         if (search_new_cursor == NULL) {
             resulting_cursor = last_search_cursor;
             break;

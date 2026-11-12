@@ -22,13 +22,17 @@ void viewer_search_init(ViewerSearch *search)
 
 void viewer_search_destroy(ViewerSearch *search)
 {
-    if (search->search_text) {
-        free((void *)search->search_text);
-        search->search_text = NULL;
-    }
+    g_clear_pointer(&search->search_text, g_free);
 }
 
-ViewerCursor *viewer_search_get_next_search(ViewerSearch *search, ViewerCursor *current_cursor)
+void viewer_search_set_text(ViewerSearch *search, const char *text)
+{
+    g_free(search->search_text);
+    search->search_text = g_strdup(text);
+}
+
+ViewerCursor *viewer_search_get_next_search(ViewerSearch *search, ViewerInfo *info,
+    const Viewport *viewport, ViewerCursor *current_cursor)
 {
     GList *matches = NULL;
     ViewerCursor *new_cursor = NULL;
@@ -38,8 +42,8 @@ ViewerCursor *viewer_search_get_next_search(ViewerSearch *search, ViewerCursor *
         return NULL;
     }
 
-    for (int i = current_cursor->current_page; i < current_cursor->info->n_pages; i++) {
-        matches = poppler_page_find_text(viewer_info_get_poppler_page(current_cursor->info, i), search->search_text);
+    for (int i = current_cursor->current_page; i < info->n_pages; i++) {
+        matches = poppler_page_find_text(viewer_info_get_poppler_page(info, i), search->search_text);
         if (matches && (i != search->last_goto_page || current_cursor->current_page != search->last_goto_page)) {
             next_page = i;
             search->last_goto_page = i;
@@ -55,13 +59,14 @@ ViewerCursor *viewer_search_get_next_search(ViewerSearch *search, ViewerCursor *
         return NULL;
     } else {
         new_cursor = viewer_cursor_copy(current_cursor);
-        viewer_cursor_goto_page(new_cursor, next_page);
+        viewport_goto_page(viewport, new_cursor, next_page);
 
         return new_cursor;
     }
 }
 
-ViewerCursor *viewer_search_get_prev_search(ViewerSearch *search, ViewerCursor *current_cursor)
+ViewerCursor *viewer_search_get_prev_search(ViewerSearch *search, ViewerInfo *info,
+    const Viewport *viewport, ViewerCursor *current_cursor)
 {
     GList *matches = NULL;
     ViewerCursor *new_cursor = NULL;
@@ -72,7 +77,7 @@ ViewerCursor *viewer_search_get_prev_search(ViewerSearch *search, ViewerCursor *
     }
 
     for (int i = current_cursor->current_page; i >= 0; i--) {
-        matches = poppler_page_find_text(viewer_info_get_poppler_page(current_cursor->info, i), search->search_text);
+        matches = poppler_page_find_text(viewer_info_get_poppler_page(info, i), search->search_text);
         if (matches && (i != search->last_goto_page || current_cursor->current_page != search->last_goto_page)) {
             prev_page = i;
             search->last_goto_page = i;
@@ -88,7 +93,7 @@ ViewerCursor *viewer_search_get_prev_search(ViewerSearch *search, ViewerCursor *
         return NULL;
     } else {
         new_cursor = viewer_cursor_copy(current_cursor);
-        viewer_cursor_goto_page(new_cursor, prev_page);
+        viewport_goto_page(viewport, new_cursor, prev_page);
 
         return new_cursor;
     }

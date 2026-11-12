@@ -242,24 +242,11 @@ static void window_finalize(GObject *object)
 {
     Window *win = (Window *)object;
 
-    if (win->renderer) {
-        renderer_destroy(win->renderer);
-        free(win->renderer);
-    }
+    renderer_destroy(win->renderer);
+    win->renderer = NULL;
 
-    if (win->viewer) {
-        // Cursor already destroyed by mark_manager destruction
-        viewer_info_destroy(win->viewer->info);
-        free(win->viewer->info);
-
-        viewer_search_destroy(win->viewer->search);
-        free(win->viewer->search);
-
-        viewer_links_destroy(win->viewer->links);
-        free(win->viewer->links);
-
-        free(win->viewer);
-    }
+    viewer_destroy(win->viewer);
+    win->viewer = NULL;
 
     app_remove_window(win->app, win);
 
@@ -279,7 +266,8 @@ Window *window_new(App *app)
     return win;
 }
 
-void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager)
+void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
+    ViewerInfo *info)
 {
     GError *error = NULL;
     ViewerCursor *cursor;
@@ -293,7 +281,7 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager)
     links = viewer_links_new();
 
     win->mark_manager = mark_manager;
-    win->viewer = viewer_new(cursor->info, cursor, search, links);
+    win->viewer = viewer_new(info, cursor, search, links);
     win->renderer = renderer_new(win->view);
 
     window_populate_toc(win);
@@ -316,7 +304,8 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager)
 void window_update_cursor(Window *win)
 {
     win->viewer->cursor = viewer_mark_manager_get_current_cursor(win->mark_manager);
-    viewer_cursor_handle_offset_update(win->viewer->cursor);
+    viewer_cursor_handle_offset_update(win->viewer->cursor,
+        win->viewer->info->n_pages);
 }
 
 void window_redraw(Window *win)
@@ -445,7 +434,7 @@ void window_execute_toc_row(Window *win, GtkListBoxRow *row)
         dest = g_object_get_data(G_OBJECT(toc_entry_box), "dest");
 
         if (dest) {
-            viewer_cursor_goto_poppler_dest(win->viewer->cursor, dest);
+            viewer_goto_dest(win->viewer, dest);
             window_redraw_all_windows(win);
         } else {
             g_printerr("Error: TOC entry has no destination\n");
@@ -531,7 +520,8 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx,
             win->viewer->cursor->x_offset -= dx;
             win->viewer->cursor->y_offset += dy;
 
-            viewer_cursor_handle_offset_update(win->viewer->cursor);
+            viewer_cursor_handle_offset_update(win->viewer->cursor,
+                win->viewer->info->n_pages);
         }
     }
 
@@ -547,8 +537,7 @@ static void on_resize(GtkDrawingArea *area, int width, int height,
 
     win = (Window *)user_data;
 
-    win->viewer->info->view_width = width;
-    win->viewer->info->view_height = height;
+    viewport_set_view_size(win->viewer->viewport, width, height);
 }
 
 static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
@@ -560,8 +549,6 @@ static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
 
     Window *win = (Window *)user_data;
     
-    viewer_update_current_page_size(win->viewer);
-
     if (win->first_draw) {
         renderer_render_visible_pages(win->renderer, win->viewer);
         win->first_draw = FALSE;
@@ -651,7 +638,7 @@ static void on_search_entry_activate(GtkEntry *entry, gpointer user_data) {
     Window *win = (Window *)user_data;
     const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
 
-    win->viewer->search->search_text = g_strdup(text);
+    viewer_search_set_text(win->viewer->search, text);
 
     gtk_window_close(GTK_WINDOW(win->search_window));
     window_redraw(win);

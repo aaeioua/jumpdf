@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "viewer_mark_manager.h"
 
 ViewerMarkManager *viewer_mark_manager_new(ViewerMarkGroup *groups[NUM_GROUPS], unsigned int current_group, unsigned int previous_group)

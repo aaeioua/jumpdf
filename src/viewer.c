@@ -1,41 +1,40 @@
 #include <stdlib.h>
-#include <stdbool.h>
 
 #include "viewer.h"
-#include "config.h"
+
+static Viewport *viewport_new_for_document(ViewerInfo *info);
 
 Viewer *viewer_new(ViewerInfo *info, ViewerCursor *cursor, ViewerSearch *search, ViewerLinks *links)
 {
-    Viewer *viewer = malloc(sizeof(Viewer));
-    if (viewer == NULL) {
+    Viewport *viewport = viewport_new_for_document(info);
+    if (viewport == NULL) {
         return NULL;
     }
 
-    viewer_init(viewer, info, cursor, search, links);
-
-    return viewer;
-}
-
-void viewer_init(Viewer *viewer, ViewerInfo *info, ViewerCursor *cursor, ViewerSearch *search, ViewerLinks *links)
-{
+    Viewer *viewer = malloc(sizeof(Viewer));
     if (viewer == NULL) {
-        return;
+        viewport_destroy(viewport);
+        return NULL;
     }
 
     viewer->info = info;
     viewer->cursor = cursor;
     viewer->search = search;
     viewer->links = links;
-
+    viewer->viewport = viewport;
     viewer->last_command = (Command){0};
     viewer->last_jump_command = (Command){0};
+
+    return viewer;
 }
 
 void viewer_destroy(Viewer *viewer)
 {
-    // FIXME: UB if member wasn't malloc'ed?
-    viewer_cursor_destroy(viewer->cursor);
-    free(viewer->cursor);
+    if (viewer == NULL) {
+        return;
+    }
+
+    viewport_destroy(viewer->viewport);
 
     viewer_search_destroy(viewer->search);
     free(viewer->search);
@@ -45,45 +44,58 @@ void viewer_destroy(Viewer *viewer)
 
     viewer_info_destroy(viewer->info);
     free(viewer->info);
+
+    free(viewer);
 }
 
-void viewer_update_current_page_size(Viewer *viewer)
+void viewer_goto_dest(Viewer *viewer, PopplerDest *dest)
 {
-    double min_width = NAN;
-    double min_height = NAN;
-    double max_width = NAN;
-    double max_height = NAN;
-
-    int from, to;
-    if (isnan(viewer->info->min_page_height)) {
-        from = 0;
-        to = viewer->info->n_pages - 1;
-    } else {
-        viewer_cursor_get_visible_pages(viewer->cursor, &from, &to);
+    if (dest == NULL) {
+        return;
     }
 
-    for (int i = from; i <= to; i++) {
-        PopplerPage *page = viewer_info_get_poppler_page(viewer->info, i);
-        g_assert(page != NULL);
-        
-        double width, height;
-        poppler_page_get_size(page, &width, &height);
-        if (isnan(min_width) || width < min_width) {
-            min_width = width;
+    viewport_goto_page_top(viewer->viewport, viewer->cursor,
+        dest->page_num - 1, dest->change_top == 1, dest->top);
+}
+
+void viewer_execute_action(Viewer *viewer, PopplerAction *action)
+{
+    PopplerActionUri *action_uri;
+    GError *error = NULL;
+    PopplerDest *dest;
+
+    switch (action->type) {
+    case POPPLER_ACTION_URI:
+        action_uri = (PopplerActionUri *)action;
+        g_app_info_launch_default_for_uri(action_uri->uri, NULL, &error);
+        if (error != NULL) {
+            g_printerr("Poppler: Error launching URI: %s\n", error->message);
+            g_error_free(error);
         }
-        if (isnan(min_height) || height < min_height) {
-            min_height = height;
+        break;
+    case POPPLER_ACTION_GOTO_DEST:
+        dest = viewer_info_get_dest(viewer->info, action->goto_dest.dest);
+        viewer_goto_dest(viewer, dest);
+        if (dest != NULL && dest != action->goto_dest.dest) {
+            poppler_dest_free(dest);
         }
-        if (isnan(max_width) || width > max_width) {
-            max_width = width;
-        }
-        if (isnan(max_height) || height > max_height) {
-            max_height = height;
-        }
+        break;
+    default:
+        g_printerr("Poppler: Unsupported link type\n");
+        break;
+    }
+}
+
+static Viewport *viewport_new_for_document(ViewerInfo *info)
+{
+    ViewportSize *sizes = g_new(ViewportSize, info->n_pages);
+    for (int i = 0; i < info->n_pages; i++) {
+        poppler_page_get_size(viewer_info_get_poppler_page(info, i),
+            &sizes[i].width, &sizes[i].height);
     }
 
-    viewer->info->min_page_width = min_width;
-    viewer->info->min_page_height = min_height;
-    viewer->info->max_page_width = max_width;
-    viewer->info->max_page_height = max_height;
+    Viewport *viewport = viewport_new(sizes, info->n_pages);
+    g_free(sizes);
+
+    return viewport;
 }

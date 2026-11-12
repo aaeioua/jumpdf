@@ -1,4 +1,4 @@
-#include <math.h>
+#include <stdlib.h>
 
 #include "viewer_info.h"
 
@@ -9,7 +9,13 @@ ViewerInfo *viewer_info_new(PopplerDocument *doc)
         return NULL;
     }
 
-    viewer_info_init(info, doc);
+    if (!viewer_info_init(info, doc)) {
+        /* On failure the caller keeps ownership of doc */
+        info->doc = NULL;
+        viewer_info_destroy(info);
+        free(info);
+        return NULL;
+    }
 
     return info;
 }
@@ -35,31 +41,41 @@ ViewerInfo *viewer_info_new_from_gfile(GFile *file)
     return info;
 }
 
-void viewer_info_init(ViewerInfo *info, PopplerDocument *doc)
+bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc)
 {
     info->doc = doc;
-    info->n_pages = poppler_document_get_n_pages(doc);
-    info->pages = malloc(sizeof(Page *) * info->n_pages);
+    info->n_pages = 0;
+    info->pages = NULL;
+
+    const int n_pages = poppler_document_get_n_pages(doc);
+    if (n_pages <= 0) {
+        g_printerr("Document has no pages\n");
+        return false;
+    }
+
+    info->pages = calloc(n_pages, sizeof(Page *));
     if (info->pages == NULL) {
-        return;
+        return false;
     }
 
-    for (int i = 0; i < info->n_pages; i++) {
-        PopplerPage *page = poppler_document_get_page(doc, i);
-        if (page == NULL) {
+    for (int i = 0; i < n_pages; i++) {
+        PopplerPage *poppler_page = poppler_document_get_page(doc, i);
+        if (poppler_page == NULL) {
             g_printerr("Could not open %i'th page of document\n", i);
-            g_object_unref(info->pages[i]);
-        } else {
-            info->pages[i] = page_new(page);
+            return false;
         }
+
+        Page *page = page_new(poppler_page);
+        if (page == NULL) {
+            g_object_unref(poppler_page);
+            return false;
+        }
+
+        info->pages[i] = page;
+        info->n_pages = i + 1;
     }
 
-    info->view_width = NAN;
-    info->view_height = NAN;
-    info->min_page_width = NAN;
-    info->min_page_height = NAN;
-    info->max_page_width = NAN;
-    info->max_page_height = NAN;
+    return true;
 }
 
 void viewer_info_destroy(ViewerInfo *info)

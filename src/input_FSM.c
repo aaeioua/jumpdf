@@ -45,10 +45,10 @@ InputState on_state_normal(Window *window, guint keyval)
             viewer_cursor_toggle_dark_mode(viewer->cursor);
             break;
         case GDK_KEY_s:
-            viewer_cursor_fit_horizontal(viewer->cursor);
+            viewport_fit_width(viewer->viewport, viewer->cursor);
             break;
         case GDK_KEY_a:
-            viewer_cursor_fit_vertical(viewer->cursor);
+            viewport_fit_height(viewer->viewport, viewer->cursor);
             break;
         case GDK_KEY_g:
             next_state = STATE_g;
@@ -138,7 +138,8 @@ InputState on_state_number(Window *window, guint keyval)
         viewer->cursor->input_number = viewer->cursor->input_number * 10 + (keyval - GDK_KEY_0);
         next_state = STATE_NUMBER;
     } else if (keyval == GDK_KEY_G) {
-        viewer_cursor_goto_page(viewer->cursor, viewer->cursor->input_number - 1);
+        viewport_goto_page(viewer->viewport, viewer->cursor,
+            (int)viewer->cursor->input_number - 1);
         viewer->cursor->input_number = 0;
         next_state = STATE_NORMAL;
     } else if (keyval == GDK_KEY_Shift_L || keyval == GDK_KEY_Shift_R) {
@@ -163,7 +164,7 @@ InputState on_state_follow_links(Window *window, guint keyval)
         next_state = STATE_FOLLOW_LINKS;
     } else if (keyval == GDK_KEY_Return && viewer->cursor->input_number - 1 < viewer->links->visible_links->len) {
         link_mapping = g_ptr_array_index(viewer->links->visible_links, viewer->cursor->input_number - 1);
-        viewer_cursor_execute_action(viewer->cursor, link_mapping->action);
+        viewer_execute_action(viewer, link_mapping->action);
         viewer->links->follow_links_mode = false;
         next_state = STATE_NORMAL;
     } else {

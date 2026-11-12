@@ -1,5 +1,4 @@
 #include "renderer.h"
-#include "config.h"
 
 #include <math.h>
 #include <string.h>
@@ -23,7 +22,6 @@ typedef struct {
     double scale;
     double page_width;
     double page_height;
-    double max_page_height;
     char *search_text;
     guint link_offset;
     guint n_links;
@@ -55,13 +53,12 @@ struct Renderer {
 
     RendererPageState *page_states;
     int page_count;
-    ViewerInfo *owner_info;
     int last_visible_from;
     int last_visible_to;
 };
 
-static void renderer_draw_page(Renderer *renderer, cairo_t *cr, Viewer *viewer,
-    int page_idx, double *base);
+static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
+    const Viewport *viewport, const ViewportLayout *layout, int page_idx);
 static void renderer_init(Renderer *renderer, GtkWidget *view);
 static void renderer_reset_page(RendererPageState *page_state);
 static void renderer_clear_surface_locked(RendererPageState *page_state);
@@ -76,13 +73,13 @@ static void render_page_async(gpointer data, gpointer user_data);
 static void renderer_render_page(Renderer *renderer, cairo_t *cr,
     PopplerPage *page, const RenderInput *input);
 static cairo_surface_t *create_loading_surface(int width, int height);
-static void viewer_translate(Viewer *viewer, cairo_t *cr);
 static void viewer_highlight_search(cairo_t *cr, PopplerPage *page,
     const RenderInput *input);
 static void viewer_draw_links(cairo_t *cr, const RenderInput *input);
 
-static RenderInput *render_input_new(Viewer *viewer, PopplerPage *page,
-    guint link_offset, guint n_links);
+static RenderInput *render_input_new(Viewer *viewer,
+    const ViewportLayout *layout, int page_idx, guint link_offset,
+    guint n_links);
 static RenderInput *render_input_copy(const RenderInput *input);
 static void render_input_free(RenderInput *input);
 static gboolean render_input_equal(const RenderInput *left,
@@ -149,6 +146,7 @@ void renderer_destroy(Renderer *renderer)
     g_weak_ref_clear(&renderer->redraw_target);
     g_mutex_clear(&renderer->poppler_render_mutex);
     g_mutex_clear(&renderer->pool_mutex);
+    g_free(renderer);
 }
 
 void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer)
@@ -160,13 +158,9 @@ void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer)
         cairo_paint(cr);
     }
 
-    viewer_translate(viewer, cr);
-
-    double base = 0;
-    int from, to;
-    viewer_cursor_get_visible_pages(viewer->cursor, &from, &to);
-    for (int i = from; i <= to; i++) {
-        renderer_draw_page(renderer, cr, viewer, i, &base);
+    ViewportLayout layout = viewport_layout(viewer->viewport, viewer->cursor);
+    for (int i = layout.from; i <= layout.to; i++) {
+        renderer_draw_page(renderer, cr, viewer->viewport, &layout, i);
     }
 
     if (viewer->cursor->dark_mode) {
@@ -180,8 +174,9 @@ void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
 {
     renderer_ensure_page_states(renderer, viewer);
 
-    int visible_from, visible_to;
-    viewer_cursor_get_visible_pages(viewer->cursor, &visible_from, &visible_to);
+    ViewportLayout layout = viewport_layout(viewer->viewport, viewer->cursor);
+    const int visible_from = layout.from;
+    const int visible_to = layout.to;
 
     if (renderer->last_visible_from >= 0) {
         for (int i = renderer->last_visible_from; i <= renderer->last_visible_to; i++) {
@@ -205,23 +200,18 @@ void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
             g_assert(viewer->links->visible_links->len == link_offset + n_links);
         }
 
-        RenderInput *input = render_input_new(viewer, page, link_offset,
-            n_links);
+        RenderInput *input = render_input_new(viewer, &layout, i,
+            link_offset, n_links);
         renderer_request_page(renderer, &renderer->page_states[i], page,
             input);
     }
 }
 
-static void renderer_draw_page(Renderer *renderer, cairo_t *cr, Viewer *viewer,
-    int page_idx, double *base)
+static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
+    const Viewport *viewport, const ViewportLayout *layout, int page_idx)
 {
-    Page *page = viewer->info->pages[page_idx];
-    double page_width, page_height;
-    poppler_page_get_size(page->poppler_page, &page_width, &page_height);
-    page_width *= viewer->cursor->scale;
-    page_height *= viewer->cursor->scale;
-    double center_offset = round((viewer->info->max_page_width *
-        viewer->cursor->scale - page_width) / 2.0);
+    const ViewportRect rect = viewport_layout_page_rect(viewport, layout,
+        page_idx);
 
     cairo_surface_t *surface = NULL;
     gboolean is_cached = FALSE;
@@ -233,11 +223,11 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr, Viewer *viewer,
         is_cached = TRUE;
     } else {
         g_mutex_unlock(&page_state->mutex);
-        surface = create_loading_surface(MAX(1, (int)page_width),
-            MAX(1, (int)page_height));
+        surface = create_loading_surface(MAX(1, (int)rect.width),
+            MAX(1, (int)rect.height));
     }
 
-    cairo_set_source_surface(cr, surface, center_offset, *base);
+    cairo_set_source_surface(cr, surface, rect.x, rect.y);
     cairo_paint(cr);
 
     if (page_idx > 0) {
@@ -245,8 +235,8 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr, Viewer *viewer,
         cairo_save(cr);
         cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
         cairo_set_line_width(cr, 1.0);
-        cairo_move_to(cr, center_offset, *base);
-        cairo_rel_line_to(cr, page_width, 0);
+        cairo_move_to(cr, rect.x, rect.y);
+        cairo_rel_line_to(cr, rect.width, 0);
         cairo_stroke(cr);
         cairo_restore(cr);
     }
@@ -256,8 +246,6 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr, Viewer *viewer,
     } else {
         cairo_surface_destroy(surface);
     }
-
-    *base += page_height;
 }
 
 static void renderer_reset_page(RendererPageState *page_state)
@@ -427,13 +415,17 @@ static void renderer_render_page(Renderer *renderer, cairo_t *cr,
     viewer_draw_links(cr, input);
 }
 
-static RenderInput *render_input_new(Viewer *viewer, PopplerPage *page,
-    guint link_offset, guint n_links)
+static RenderInput *render_input_new(Viewer *viewer,
+    const ViewportLayout *layout, int page_idx, guint link_offset,
+    guint n_links)
 {
+    const ViewportSize page_size = viewport_get_page_size(viewer->viewport,
+        page_idx);
+
     RenderInput *input = g_new0(RenderInput, 1);
-    input->scale = viewer->cursor->scale;
-    poppler_page_get_size(page, &input->page_width, &input->page_height);
-    input->max_page_height = viewer->info->max_page_height;
+    input->scale = layout->scale;
+    input->page_width = page_size.width;
+    input->page_height = page_size.height;
     input->search_text = g_strdup(viewer->search->search_text);
     input->link_offset = link_offset;
     input->n_links = n_links;
@@ -501,7 +493,6 @@ static gboolean render_input_equal(const RenderInput *left,
     if (fabs(left->scale - right->scale) >= SCALE_EPSILON ||
         left->page_width != right->page_width ||
         left->page_height != right->page_height ||
-        left->max_page_height != right->max_page_height ||
         g_strcmp0(left->search_text, right->search_text) != 0 ||
         left->link_offset != right->link_offset ||
         left->n_links != right->n_links) {
@@ -524,7 +515,6 @@ static void renderer_ensure_page_states(Renderer *renderer, Viewer *viewer)
 {
     if (renderer->page_states == NULL) {
         renderer->page_count = viewer->info->n_pages;
-        renderer->owner_info = viewer->info;
         renderer->page_states = g_new0(RendererPageState,
             renderer->page_count);
         for (int i = 0; i < renderer->page_count; i++) {
@@ -598,47 +588,6 @@ static cairo_surface_t *create_loading_surface(int width, int height)
     return loading_surface;
 }
 
-static void viewer_translate(Viewer *viewer, cairo_t *cr)
-{
-    if (viewer->cursor->center_mode) {
-        viewer_cursor_center(viewer->cursor);
-    }
-
-    const double x_offset = viewer->cursor->x_offset;
-    const double y_offset = viewer->cursor->y_offset;
-    const double scale = viewer->cursor->scale;
-    const double page_width = viewer->info->max_page_width;
-    const double page_height = viewer->info->max_page_height;
-    const double view_width = viewer->info->view_width;
-    const double view_height = viewer->info->view_height;
-
-    int visible_from, visible_to;
-    viewer_cursor_get_visible_pages(viewer->cursor, &visible_from,
-        &visible_to);
-    const int page_offset_idx = viewer->cursor->current_page - visible_from;
-    g_assert(page_offset_idx >= 0 && page_offset_idx <=
-        visible_to - visible_from);
-
-    const double page_center_x = scale * (page_width / 2.0);
-    const double page_center_y = scale * (page_height / 2.0);
-    const double view_center_x = view_width / 2.0;
-    const double view_center_y = view_height / 2.0;
-
-    const double x_center_translate = view_center_x - page_center_x;
-    const double x_offset_translate = (x_offset / g_config->steps) *
-        page_width;
-    const double x_translate = round(x_center_translate + x_offset_translate);
-
-    const double y_page_translate = -page_offset_idx * page_height * scale;
-    const double y_center_translate = view_center_y - page_center_y;
-    const double y_offset_translate = -(y_offset / g_config->steps) *
-        page_height * scale;
-    const double y_translate = round(y_page_translate + y_center_translate +
-        y_offset_translate);
-
-    cairo_translate(cr, x_translate, y_translate);
-}
-
 static void viewer_highlight_search(cairo_t *cr, PopplerPage *page,
     const RenderInput *input)
 {
@@ -650,7 +599,7 @@ static void viewer_highlight_search(cairo_t *cr, PopplerPage *page,
     for (GList *elem = matches; elem; elem = elem->next) {
         PopplerRectangle *highlight_rect = elem->data;
         double x = highlight_rect->x1;
-        double y = input->max_page_height - highlight_rect->y1;
+        double y = input->page_height - highlight_rect->y1;
         double width = highlight_rect->x2 - highlight_rect->x1;
         double height = highlight_rect->y1 - highlight_rect->y2;
 
@@ -669,7 +618,7 @@ static void viewer_draw_links(cairo_t *cr, const RenderInput *input)
         char *link_text = g_strdup_printf("%u", input->link_offset + i + 1);
 
         cairo_move_to(cr, link->x1,
-            input->max_page_height - link->y1);
+            input->page_height - link->y1);
         cairo_text_path(cr, link_text);
         cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
         cairo_set_line_width(cr, 2.0);
