@@ -40,7 +40,12 @@ void viewer_mark_manager_destroy(ViewerMarkManager *manager)
         free(manager->groups[i]);
     }
 
-    free(manager->groups);
+    free(manager);
+}
+
+void viewer_mark_manager_free_copy(ViewerMarkManager *copy)
+{
+    free(copy);
 }
 
 void viewer_mark_manager_set_mark(ViewerMarkManager *manager, ViewerCursor *cursor, unsigned int group_i, unsigned int mark_i)

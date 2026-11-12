@@ -14,6 +14,8 @@ ViewerMarkManager *viewer_mark_manager_new(ViewerMarkGroup *groups[NUM_GROUPS], 
 ViewerMarkManager *viewer_mark_manager_copy(ViewerMarkManager *manager);
 void viewer_mark_manager_init(ViewerMarkManager *manager, ViewerMarkGroup *groups[NUM_GROUPS], unsigned int current_group, unsigned int previous_group);
 void viewer_mark_manager_destroy(ViewerMarkManager *manager);
+/* Frees only a copy's own selection state; its Groups are left intact. */
+void viewer_mark_manager_free_copy(ViewerMarkManager *copy);
 
 void viewer_mark_manager_set_mark(ViewerMarkManager *manager, ViewerCursor *cursor, unsigned int group_i, unsigned int mark_i);
 ViewerCursor *viewer_mark_manager_get_mark(ViewerMarkManager *manager, unsigned int group_i, unsigned int mark_i);

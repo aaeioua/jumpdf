@@ -10,6 +10,7 @@
 static void window_update_cursor_cb(gpointer win_ptr, gpointer user_data);
 static void window_redraw_cb(gpointer win_ptr, gpointer user_data);
 static void database_update_mark_manager_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data);
+static gboolean mark_manager_equal_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data);
 
 static void on_file_dialog_response(GObject *source_object, GAsyncResult *res, gpointer user_data);
 
@@ -176,6 +177,18 @@ ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
     return mark_manager;
 }
 
+void app_release_mark_manager(App *app, ViewerMarkManager *manager)
+{
+    if (manager == NULL) {
+        return;
+    }
+
+    if (g_hash_table_find(app->uri_mark_manager_map, mark_manager_equal_cb,
+            manager) == NULL) {
+        viewer_mark_manager_free_copy(manager);
+    }
+}
+
 void app_remove_window(App *app, Window *win)
 {
     g_ptr_array_remove_fast(app->windows, win);
@@ -237,6 +250,13 @@ static void database_update_mark_manager_cb(gpointer uri_ptr, gpointer manager_p
     App *app = (App *)user_data;
 
     database_update_mark_manager(app->db, uri, manager);
+}
+
+static gboolean mark_manager_equal_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data)
+{
+    UNUSED(uri_ptr);
+
+    return manager_ptr == user_data;
 }
 
 static void on_file_dialog_response(GObject *source_object, GAsyncResult *res, gpointer user_data)

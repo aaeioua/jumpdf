@@ -248,6 +248,9 @@ static void window_finalize(GObject *object)
     viewer_destroy(win->viewer);
     win->viewer = NULL;
 
+    app_release_mark_manager(win->app, win->mark_manager);
+    win->mark_manager = NULL;
+
     app_remove_window(win->app, win);
 
     G_OBJECT_CLASS(window_parent_class)->finalize(object);
