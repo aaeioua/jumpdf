@@ -20,9 +20,8 @@ typedef struct {
     int from;
     int to;
     double scale;
-    /* Largest page dimensions within [from, to], unscaled */
+    /* Widest page within [from, to], unscaled */
     double max_page_width;
-    double max_page_height;
     /* View position of the top edge of page `from` */
     double stack_top;
     /* View position of the left edge of a page with width max_page_width */
@@ -45,7 +44,6 @@ ViewportLayout viewport_layout(const Viewport *viewport, const ViewerCursor *cur
 ViewportRect viewport_layout_page_rect(const Viewport *viewport,
     const ViewportLayout *layout, int page);
 
-/* Navigation that depends on page geometry. */
 void viewport_fit_width(const Viewport *viewport, ViewerCursor *cursor);
 void viewport_fit_height(const Viewport *viewport, ViewerCursor *cursor);
 void viewport_goto_page(const Viewport *viewport, ViewerCursor *cursor, int page);

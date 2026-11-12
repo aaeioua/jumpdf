@@ -4,6 +4,7 @@
 #include <string.h>
 
 #define SCALE_EPSILON 1e-6
+#define PREFETCH_PAGES 1
 
 typedef enum {
     RENDERER_PAGE_NOT_RENDERED,
@@ -53,14 +54,16 @@ struct Renderer {
 
     RendererPageState *page_states;
     int page_count;
-    int last_visible_from;
-    int last_visible_to;
+    int last_requested_from;
+    int last_requested_to;
 };
 
 static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
     const Viewport *viewport, const ViewportLayout *layout, int page_idx);
 static void renderer_init(Renderer *renderer, GtkWidget *view);
 static void renderer_reset_page(RendererPageState *page_state);
+static void renderer_prefetch_page(Renderer *renderer, Viewer *viewer,
+    const ViewportLayout *layout, int page_idx);
 static void renderer_clear_surface_locked(RendererPageState *page_state);
 static void renderer_request_page(Renderer *renderer,
     RendererPageState *page_state, PopplerPage *poppler_page,
@@ -103,8 +106,8 @@ void renderer_init(Renderer *renderer, GtkWidget *view)
         view != NULL ? G_OBJECT(view) : NULL);
     g_mutex_init(&renderer->pool_mutex);
     g_mutex_init(&renderer->poppler_render_mutex);
-    renderer->last_visible_from = -1;
-    renderer->last_visible_to = -1;
+    renderer->last_requested_from = -1;
+    renderer->last_requested_to = -1;
 
     GError *error = NULL;
     renderer->render_pool = g_thread_pool_new(render_page_async, renderer,
@@ -177,17 +180,21 @@ void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
     ViewportLayout layout = viewport_layout(viewer->viewport, viewer->cursor);
     const int visible_from = layout.from;
     const int visible_to = layout.to;
+    const int requested_from = MAX(0, visible_from - PREFETCH_PAGES);
+    const int requested_to = MIN(renderer->page_count - 1,
+        visible_to + PREFETCH_PAGES);
 
-    if (renderer->last_visible_from >= 0) {
-        for (int i = renderer->last_visible_from; i <= renderer->last_visible_to; i++) {
-            if (i < visible_from || i > visible_to) {
+    if (renderer->last_requested_from >= 0) {
+        for (int i = renderer->last_requested_from;
+             i <= renderer->last_requested_to; i++) {
+            if (i < requested_from || i > requested_to) {
                 renderer_reset_page(&renderer->page_states[i]);
             }
         }
     }
 
-    renderer->last_visible_from = visible_from;
-    renderer->last_visible_to = visible_to;
+    renderer->last_requested_from = requested_from;
+    renderer->last_requested_to = requested_to;
 
     viewer_links_clear_links(viewer->links);
     for (int i = visible_from; i <= visible_to; i++) {
@@ -205,6 +212,22 @@ void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
         renderer_request_page(renderer, &renderer->page_states[i], page,
             input);
     }
+
+    for (int i = visible_to + 1; i <= requested_to; i++) {
+        renderer_prefetch_page(renderer, viewer, &layout, i);
+    }
+    for (int i = visible_from - 1; i >= requested_from; i--) {
+        renderer_prefetch_page(renderer, viewer, &layout, i);
+    }
+}
+
+static void renderer_prefetch_page(Renderer *renderer, Viewer *viewer,
+    const ViewportLayout *layout, int page_idx)
+{
+    PopplerPage *page = viewer_info_get_poppler_page(viewer->info, page_idx);
+    RenderInput *input = render_input_new(viewer, layout, page_idx, 0, 0);
+    renderer_request_page(renderer, &renderer->page_states[page_idx], page,
+        input);
 }
 
 static void renderer_draw_page(Renderer *renderer, cairo_t *cr,

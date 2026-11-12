@@ -7,14 +7,13 @@
 struct Viewport {
     ViewportSize *page_sizes;
     int n_pages;
-    double min_page_height;
     double view_width;
     double view_height;
 };
 
 static int clamp_page(const Viewport *viewport, int page);
 static void visible_range(const Viewport *viewport, int current_page,
-    double scale, int *from, int *to);
+    double current_top, ViewportLayout *layout);
 
 Viewport *viewport_new(const ViewportSize *page_sizes, int n_pages)
 {
@@ -24,12 +23,6 @@ Viewport *viewport_new(const ViewportSize *page_sizes, int n_pages)
     viewport->page_sizes = g_memdup2(page_sizes,
         sizeof(ViewportSize) * n_pages);
     viewport->n_pages = n_pages;
-
-    viewport->min_page_height = page_sizes[0].height;
-    for (int i = 1; i < n_pages; i++) {
-        viewport->min_page_height = MIN(viewport->min_page_height,
-            page_sizes[i].height);
-    }
 
     return viewport;
 }
@@ -63,29 +56,21 @@ ViewportLayout viewport_layout(const Viewport *viewport,
     const double scale = cursor->scale;
     const double x_offset = cursor->center_mode ? 0.0 : cursor->x_offset;
 
+    const double current_height = viewport->page_sizes[current_page].height;
+    const double current_top = round(viewport->view_height / 2.0 -
+        scale * current_height * (0.5 + cursor->y_offset / steps));
+
     ViewportLayout layout = { .scale = scale };
-    visible_range(viewport, current_page, scale, &layout.from, &layout.to);
+    visible_range(viewport, current_page, current_top, &layout);
 
     for (int i = layout.from; i <= layout.to; i++) {
         layout.max_page_width = MAX(layout.max_page_width,
             viewport->page_sizes[i].width);
-        layout.max_page_height = MAX(layout.max_page_height,
-            viewport->page_sizes[i].height);
     }
 
     const double max_width = layout.max_page_width;
-    const double max_height = layout.max_page_height;
-
     layout.column_left = round(viewport->view_width / 2.0 -
         scale * max_width / 2.0 + (x_offset / steps) * max_width);
-
-    double above = 0;
-    for (int i = layout.from; i < current_page; i++) {
-        above += viewport->page_sizes[i].height * scale;
-    }
-    layout.stack_top = round(viewport->view_height / 2.0 -
-        scale * max_height / 2.0 -
-        (cursor->y_offset / steps) * max_height * scale - above);
 
     return layout;
 }
@@ -124,9 +109,10 @@ void viewport_fit_width(const Viewport *viewport, ViewerCursor *cursor)
 
 void viewport_fit_height(const Viewport *viewport, ViewerCursor *cursor)
 {
-    ViewportLayout layout = viewport_layout(viewport, cursor);
-    if (viewport->view_height > 0 && layout.max_page_height > 0) {
-        cursor->scale = viewport->view_height / layout.max_page_height;
+    const ViewportSize page = viewport_get_page_size(viewport,
+        cursor->current_page);
+    if (viewport->view_height > 0 && page.height > 0) {
+        cursor->scale = viewport->view_height / page.height;
     }
     viewer_cursor_center(cursor);
 }
@@ -144,16 +130,16 @@ void viewport_goto_page_top(const Viewport *viewport, ViewerCursor *cursor,
     const int steps = g_config->steps;
 
     cursor->current_page = clamp_page(viewport, page);
-    ViewportLayout layout = viewport_layout(viewport, cursor);
+    const double height = viewport->page_sizes[cursor->current_page].height;
 
     /* Sanity check for PDFs with invalid top values */
-    if (!has_top || top >= layout.max_page_height) {
+    if (!has_top || top >= height) {
         viewport_goto_page(viewport, cursor, page);
         return;
     }
 
     /* Top is relative to the bottom of the page */
-    cursor->y_offset = steps - steps * (top / layout.max_page_height);
+    cursor->y_offset = steps - steps * (top / height);
     viewport_fit_height(viewport, cursor);
 }
 
@@ -163,18 +149,26 @@ static int clamp_page(const Viewport *viewport, int page)
 }
 
 static void visible_range(const Viewport *viewport, int current_page,
-    double scale, int *from, int *to)
+    double current_top, ViewportLayout *layout)
 {
-    /*
-     * Use the smallest page height in the document so the range is never
-     * too short, whichever pages happen to be on screen.
-     */
-    const double page_height = scale * viewport->min_page_height;
-    const double visible_pages = page_height > 0
-        ? MIN(viewport->view_height / page_height, (double)viewport->n_pages)
-        : 0;
-    const int half = (int)ceil(visible_pages / 2.0);
+    const double scale = layout->scale;
 
-    *from = MAX(0, current_page - half);
-    *to = MIN(viewport->n_pages - 1, current_page + half + 1);
+    int from = current_page;
+    double top = current_top;
+    while (from > 0 && top > 0) {
+        from--;
+        top -= scale * viewport->page_sizes[from].height;
+    }
+
+    int to = current_page;
+    double bottom = current_top +
+        scale * viewport->page_sizes[current_page].height;
+    while (to < viewport->n_pages - 1 && bottom < viewport->view_height) {
+        to++;
+        bottom += scale * viewport->page_sizes[to].height;
+    }
+
+    layout->from = from;
+    layout->to = to;
+    layout->stack_top = top;
 }
