@@ -91,9 +91,9 @@ jumpdf <pdf_file1> <pdf_file2> ...
 ### Keybindings
 
 - <kbd>\<number>\<command></kbd> (repeats \<command> \<number> times)
-  - <kbd>j</kbd>, <kbd>k</kbd> (Move down, up)
-  - <kbd>h</kbd>, <kbd>l</kbd> (Move left, right. Must not be in center mode)
-  - <kbd>d</kbd>, <kbd>u</kbd> (Move down, up half a page)
+  - <kbd>j</kbd>/<kbd>Down</kbd>, <kbd>k</kbd>/<kbd>Up</kbd> (Move down, up)
+  - <kbd>h</kbd>/<kbd>Left</kbd>, <kbd>l</kbd>/<kbd>Right</kbd> (Move left, right. Must not be in center mode)
+  - <kbd>d</kbd>/<kbd>PgDn</kbd>, <kbd>u</kbd>/<kbd>PgUp</kbd> (Move down, up half a page)
   - <kbd>+</kbd>, <kbd>-</kbd> (Zoom in, out)
   - <kbd>n</kbd>, <kbd>N</kbd> (Goto next, previous page containing the search string)
 - <kbd>0</kbd> (Reset zoom)
@@ -101,7 +101,7 @@ jumpdf <pdf_file1> <pdf_file2> ...
 - <kbd>b</kbd> (Toggle dark mode)
 - <kbd>s</kbd> (Fit horizontally to page)
 - <kbd>a</kbd> (Fit vertically to page)
-- <kbd>gg</kbd>, <kbd>G</kbd>, <kbd>\<number>G</kbd> (Goto first, last page, page \<number>)
+- <kbd>gg</kbd>/<kbd>Home</kbd>, <kbd>G</kbd>/<kbd>End</kbd>, <kbd>\<number>G</kbd> (Goto first, last page, page \<number>)
 - <kbd>f</kbd> (Show link numbers) + <kbd>\<number></kbd> + <kbd>Enter</kbd> (Execute link)
 - <kbd>m\<1-9></kbd> (Set current mark to \<1-9>. If the mark hasn't been set, it will be set to the current cursor)
 - <kbd>mn</kbd> (Switch to previous mark)

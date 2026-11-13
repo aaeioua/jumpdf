@@ -13,11 +13,28 @@
 Config *g_config = NULL;
 
 static void config_parse(Config *config, FILE *fp);
-static void config_load_default_statusline_left(Config *config);
-static void config_load_default_statusline_middle(Config *config);
-static void config_load_default_statusline_right(Config *config);
-/* Necessary because g_array_append_val requires a reference, not a literal */
-static void statusline_section_add_component(GArray *section, StatuslineComponent component);
+static void config_parse_settings(Config *config, const toml_table_t *settings);
+static gchar *settings_string(const toml_table_t *settings, const char *key,
+    const char *fallback);
+static int settings_int(const toml_table_t *settings, const char *key,
+    int fallback);
+static double settings_double(const toml_table_t *settings, const char *key,
+    double fallback);
+static void settings_statusline_section(const toml_table_t *settings,
+    const char *key, GArray *section, void (*load_default)(GArray *section));
+static void statusline_section_load_default_left(GArray *section);
+static void statusline_section_load_default_middle(GArray *section);
+static void statusline_section_load_default_right(GArray *section);
+
+static const struct {
+    const char *key;
+    StatuslineSection section;
+    void (*load_default)(GArray *section);
+} statusline_section_keys[] = {
+    {"statusline_left", STATUSLINE_SECTION_LEFT, statusline_section_load_default_left},
+    {"statusline_middle", STATUSLINE_SECTION_MIDDLE, statusline_section_load_default_middle},
+    {"statusline_right", STATUSLINE_SECTION_RIGHT, statusline_section_load_default_right},
+};
 
 Config *config_new(void)
 {
@@ -38,10 +55,7 @@ void config_init(Config *config)
     config->min_scale = -1.0;
     config->scale_step = -1.0;
 
-    config->statusline_separator = NULL;
-    config->statusline_left = g_array_new(FALSE, TRUE, sizeof(StatuslineComponent));
-    config->statusline_middle = g_array_new(FALSE, TRUE, sizeof(StatuslineComponent));
-    config->statusline_right = g_array_new(FALSE, TRUE, sizeof(StatuslineComponent));
+    statusline_layout_init(&config->statusline);
 }
 
 void config_destroy(Config *config)
@@ -51,10 +65,7 @@ void config_destroy(Config *config)
         config->file_chooser_initial_folder_path = NULL;
     }
 
-    g_free(config->statusline_separator);
-    g_array_free(config->statusline_left, TRUE);
-    g_array_free(config->statusline_middle, TRUE);
-    g_array_free(config->statusline_right, TRUE);
+    statusline_layout_clear(&config->statusline);
 }
 
 void config_set_file_chooser_initial_folder_path(Config *config, gchar *file_chooser_initial_folder_path)
@@ -94,7 +105,8 @@ void config_set_scale_step(Config *config, double scale_step)
 
 void config_set_statusline_separator(Config *config, gchar *statusline_separator)
 {
-    config->statusline_separator = statusline_separator;
+    g_free(config->statusline.separator);
+    config->statusline.separator = statusline_separator;
 }
 
 void config_load(Config *config)
@@ -122,20 +134,17 @@ void config_load_default(Config *config)
     config_set_scale_step(config, DEFAULT_SCALE_STEP);
     config_set_statusline_separator(config, g_strdup(DEFAULT_STATUSLINE_SEPARATOR));
 
-    config_load_default_statusline_left(config);
-    config_load_default_statusline_middle(config);
-    config_load_default_statusline_right(config);
+    for (guint i = 0; i < G_N_ELEMENTS(statusline_section_keys); i++) {
+        statusline_section_keys[i].load_default(
+            config->statusline.sections[statusline_section_keys[i].section]);
+    }
 }
 
 static void config_parse(Config *config, FILE *fp)
 {
-    // TODO: Very long function
     toml_table_t *conf;
     char errbuf[256];
     toml_table_t *settings;
-    toml_datum_t datum;
-    toml_array_t *array;
-    StatuslineComponent component = 0;
 
     conf = toml_parse_file(fp, errbuf, sizeof(errbuf));
     if (conf == 0) {
@@ -146,151 +155,157 @@ static void config_parse(Config *config, FILE *fp)
 
     settings = toml_table_in(conf, "Settings");
     if (settings) {
-        datum = toml_string_in(settings, "file_chooser_initial_folder_path");
-        if (datum.ok) {
-            config_set_file_chooser_initial_folder_path(config, datum.u.s);
-        } else {
-            g_printerr("Error parsing \"file_chooser_initial_folder_path\". Using default value.\n");
-            config_set_file_chooser_initial_folder_path(config, g_strdup(DEFAULT_FILE_CHOOSER_INITIAL_FOLDER_PATH));
-        }
-
-        datum = toml_int_in(settings, "steps");
-        if (datum.ok) {
-            config_set_steps(config, datum.u.i);
-        } else {
-            g_printerr("Error parsing \"steps\". Using default value.\n");
-            config_set_steps(config, DEFAULT_STEPS);
-        }
-
-        datum = toml_double_in(settings, "min_scale");
-        if (datum.ok) {
-            config_set_min_scale(config, datum.u.d);
-        } else {
-            g_printerr("Error parsing \"min_scale\". Using default value.\n");
-            config_set_min_scale(config, DEFAULT_MIN_SCALE);
-        }
-
-        datum = toml_double_in(settings, "scale_step");
-        if (datum.ok) {
-            config_set_scale_step(config, datum.u.d);
-        } else {
-            g_printerr("Error parsing \"scale_step\". Using default value.\n");
-            config_set_scale_step(config, DEFAULT_SCALE_STEP);
-        }
-
-        datum = toml_string_in(settings, "statusline_separator");
-        if (datum.ok) {
-            config_set_statusline_separator(config, datum.u.s);
-        } else {
-            g_printerr("Error parsing \"statusline_separator\". Using default value.\n");
-            config_set_statusline_separator(config, g_strdup(DEFAULT_STATUSLINE_SEPARATOR));
-        }
-
-        array = toml_array_in(settings, "statusline_left");
-        if (array) {
-            g_array_set_size(config->statusline_left, toml_array_nelem(array));
-            for (int i = 0; i < toml_array_nelem(array); i++) {
-                datum = toml_string_at(array, i);
-                if (datum.ok) {
-                    component = statusline_component_from_str(datum.u.s);
-                    if (component != 0) {
-                        statusline_section_add_component(config->statusline_left, component);
-                    } else {
-                        g_printerr("Error: Component \"%s\" in \"statusline_left\" is invalid. Skipping.\n", datum.u.s);
-                    }
-
-                    free(datum.u.s);
-                } else {
-                    g_printerr("Error: statusline_left[%d] is not a string. Skipping.\n", i);
-                }
-            }
-        } else {
-            g_printerr("Error parsing \"statusline_left\". Using default value.\n");
-            config_load_default_statusline_left(config);
-        }
-
-        array = toml_array_in(settings, "statusline_middle");
-        if (array) {
-            g_array_set_size(config->statusline_middle, toml_array_nelem(array));
-            for (int i = 0; i < toml_array_nelem(array); i++) {
-                datum = toml_string_at(array, i);
-                if (datum.ok) {
-                    component = statusline_component_from_str(datum.u.s);
-                    if (component != 0) {
-                        statusline_section_add_component(config->statusline_middle, component);
-                    } else {
-                        g_printerr("Error: Component \"%s\" in \"statusline_middle\" is invalid. Skipping.\n", datum.u.s);
-                    }
-
-                    free(datum.u.s);
-                } else {
-                    g_printerr("Error: statusline_middle[%d] is not a string. Skipping.\n", i);
-                }
-            }
-        } else {
-            g_printerr("Error parsing \"statusline_middle\". Using default value.\n");
-            config_load_default_statusline_middle(config);
-        }
-
-        array = toml_array_in(settings, "statusline_right");
-        if (array) {
-            g_array_set_size(config->statusline_right, toml_array_nelem(array));
-            for (int i = 0; i < toml_array_nelem(array); i++) {
-                datum = toml_string_at(array, i);
-                if (datum.ok) {
-                    component = statusline_component_from_str(datum.u.s);
-                    if (component != 0) {
-                        statusline_section_add_component(config->statusline_right, component);
-                    } else {
-                        g_printerr("Error: Component \"%s\" in \"statusline_right\" is invalid. Skipping.\n", datum.u.s);
-                    }
-
-                    free(datum.u.s);
-                } else {
-                    g_printerr("Error: statusline_right[%d] is not a string. Skipping.\n", i);
-                }
-            }
-        } else {
-            g_printerr("Error parsing \"statusline_right\". Using default value.\n");
-            config_load_default_statusline_right(config);
-        }
+        config_parse_settings(config, settings);
     } else {
-        g_printerr("Error parsing config file: No \"Settings\" table found. Using default values.\n");
         config_load_default(config);
     }
 
     toml_free(conf);
 }
 
-static void config_load_default_statusline_left(Config *config)
+/* A missing key uses its default silently; a present but invalid one prints an error */
+static void config_parse_settings(Config *config, const toml_table_t *settings)
 {
-    StatuslineComponent components[] = {
+    config_set_file_chooser_initial_folder_path(config,
+        settings_string(settings, "file_chooser_initial_folder_path",
+            DEFAULT_FILE_CHOOSER_INITIAL_FOLDER_PATH));
+    config_set_steps(config,
+        settings_int(settings, "steps", DEFAULT_STEPS));
+    config_set_min_scale(config,
+        settings_double(settings, "min_scale", DEFAULT_MIN_SCALE));
+    config_set_scale_step(config,
+        settings_double(settings, "scale_step", DEFAULT_SCALE_STEP));
+    config_set_statusline_separator(config,
+        settings_string(settings, "statusline_separator",
+            DEFAULT_STATUSLINE_SEPARATOR));
+
+    for (guint i = 0; i < G_N_ELEMENTS(statusline_section_keys); i++) {
+        settings_statusline_section(settings, statusline_section_keys[i].key,
+            config->statusline.sections[statusline_section_keys[i].section],
+            statusline_section_keys[i].load_default);
+    }
+}
+
+static gchar *settings_string(const toml_table_t *settings, const char *key,
+    const char *fallback)
+{
+    toml_datum_t datum;
+    gchar *value;
+
+    if (!toml_key_exists(settings, key)) {
+        return g_strdup(fallback);
+    }
+
+    datum = toml_string_in(settings, key);
+    if (!datum.ok) {
+        g_printerr("Error parsing \"%s\". Using default value.\n", key);
+        return g_strdup(fallback);
+    }
+
+    value = g_strdup(datum.u.s);
+    free(datum.u.s);
+    return value;
+}
+
+static int settings_int(const toml_table_t *settings, const char *key,
+    int fallback)
+{
+    toml_datum_t datum;
+
+    if (!toml_key_exists(settings, key)) {
+        return fallback;
+    }
+
+    datum = toml_int_in(settings, key);
+    if (!datum.ok) {
+        g_printerr("Error parsing \"%s\". Using default value.\n", key);
+        return fallback;
+    }
+
+    return datum.u.i;
+}
+
+static double settings_double(const toml_table_t *settings, const char *key,
+    double fallback)
+{
+    toml_datum_t datum;
+
+    if (!toml_key_exists(settings, key)) {
+        return fallback;
+    }
+
+    datum = toml_double_in(settings, key);
+    if (!datum.ok) {
+        g_printerr("Error parsing \"%s\". Using default value.\n", key);
+        return fallback;
+    }
+
+    return datum.u.d;
+}
+
+static void settings_statusline_section(const toml_table_t *settings,
+    const char *key, GArray *section, void (*load_default)(GArray *section))
+{
+    toml_array_t *array;
+    toml_datum_t datum;
+    StatuslineComponent component;
+
+    if (!toml_key_exists(settings, key)) {
+        load_default(section);
+        return;
+    }
+
+    array = toml_array_in(settings, key);
+    if (array == NULL) {
+        g_printerr("Error parsing \"%s\". Using default value.\n", key);
+        load_default(section);
+        return;
+    }
+
+    g_array_set_size(section, 0);
+    for (int i = 0; i < toml_array_nelem(array); i++) {
+        datum = toml_string_at(array, i);
+        if (!datum.ok) {
+            g_printerr("Error: %s[%d] is not a string. Skipping.\n", key, i);
+            continue;
+        }
+
+        component = statusline_component_from_str(datum.u.s);
+        if (component != 0) {
+            g_array_append_val(section, component);
+        } else {
+            g_printerr("Error: Component \"%s\" in \"%s\" is invalid. Skipping.\n",
+                datum.u.s, key);
+        }
+
+        free(datum.u.s);
+    }
+}
+
+static void statusline_section_load_default_left(GArray *section)
+{
+    static const StatuslineComponent components[] = {
         STATUSLINE_COMPONENT_PAGE,
+        STATUSLINE_COMPONENT_PENDING_KEYS,
     };
 
-    g_array_set_size(config->statusline_left, 0);
-    g_array_append_vals(config->statusline_left, components, sizeof(components) / sizeof(components[0]));
+    g_array_set_size(section, 0);
+    g_array_append_vals(section, components, G_N_ELEMENTS(components));
 }
 
-static void config_load_default_statusline_middle(Config *config)
+static void statusline_section_load_default_middle(GArray *section)
 {
-    g_array_set_size(config->statusline_middle, 0);
+    g_array_set_size(section, 0);
 }
 
-static void config_load_default_statusline_right(Config *config)
+static void statusline_section_load_default_right(GArray *section)
 {
-    StatuslineComponent components[] = {
-        STATUSLINE_COMPONENT_PENDING_KEYS,
+    static const StatuslineComponent components[] = {
         STATUSLINE_COMPONENT_CENTER_MODE,
         STATUSLINE_COMPONENT_SCALE,
         STATUSLINE_COMPONENT_MARK_SELECTION,
     };
 
-    g_array_set_size(config->statusline_right, 0);
-    g_array_append_vals(config->statusline_right, components, sizeof(components) / sizeof(components[0]));
-}
-
-static void statusline_section_add_component(GArray *section, StatuslineComponent component)
-{
-    g_array_append_val(section, component);
+    g_array_set_size(section, 0);
+    g_array_append_vals(section, components, G_N_ELEMENTS(components));
 }

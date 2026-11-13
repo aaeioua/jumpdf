@@ -18,6 +18,3 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
 void window_redraw(Window *win);
 
 ViewerMarkManager *window_get_mark_manager(Window *win);
-GroupSelection *window_get_group_selection(Window *win);
-Viewer *window_get_viewer(Window *win);
-Input *window_get_input(Window *win);

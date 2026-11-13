@@ -6,6 +6,8 @@ sources = [
     'app.c',
     'window.c',
     'statusline.c',
+    'statusline_layout.c',
+    'statusline_format.c',
     'mark_store.c',
     'viewer.c',
     'renderer.c',

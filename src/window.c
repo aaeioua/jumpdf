@@ -14,12 +14,7 @@
 #include "viewer_mark_manager.h"
 #include "input.h"
 #include "renderer.h"
-
-// TODO: Load from file or resource
-static const char *css = 
-    ".statusline {"
-    "    background-color: black;"
-    "}";
+#include "statusline.h"
 
 static void window_redraw_document_windows(Window *win);
 static void window_handle_request(Window *win, InputRequest request);
@@ -62,13 +57,7 @@ struct _Window {
     GtkWidget *view_box;
     GtkWidget *view;
 
-    GtkWidget *statusline;
-    GtkWidget *statusline_left;
-    GtkWidget *statusline_middle;
-    GtkWidget *statusline_right;
-    GtkWidget *left_label;
-    GtkWidget *middle_label;
-    GtkWidget *right_label;
+    Statusline *statusline;
 
     GtkWidget *toc_scroll_window;
     GtkWidget *toc_box;
@@ -99,8 +88,6 @@ G_DEFINE_TYPE(Window, window, GTK_TYPE_APPLICATION_WINDOW)
 
 static void window_init(Window *win)
 {
-    GtkCssProvider *css_provider;
-
     win->uri = NULL;
     win->mark_manager = NULL;
     win->selection = NULL;
@@ -128,36 +115,13 @@ static void window_init(Window *win)
         win, NULL);
     g_signal_connect(win->view, "resize", G_CALLBACK(on_resize), win);
 
-    win->statusline = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_add_css_class(win->statusline, "statusline");
-
-    win->statusline_left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand(win->statusline_left, FALSE);
-    gtk_widget_set_halign(win->statusline_left, GTK_ALIGN_START);
-    win->left_label = gtk_label_new(NULL);
-    gtk_box_append(GTK_BOX(win->statusline_left), win->left_label);
-
-    win->statusline_middle = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand(win->statusline_middle, TRUE);
-    gtk_widget_set_halign(win->statusline_middle, GTK_ALIGN_CENTER);
-    win->middle_label = gtk_label_new(NULL);
-    gtk_box_append(GTK_BOX(win->statusline_middle), win->middle_label);
-
-    win->statusline_right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand(win->statusline_right, FALSE);
-    gtk_widget_set_halign(win->statusline_right, GTK_ALIGN_END);
-    win->right_label = gtk_label_new(NULL);
-    gtk_box_append(GTK_BOX(win->statusline_right), win->right_label);
-
-    gtk_box_append(GTK_BOX(win->statusline), win->statusline_left);
-    gtk_box_append(GTK_BOX(win->statusline), win->statusline_middle);
-    gtk_box_append(GTK_BOX(win->statusline), win->statusline_right);
+    win->statusline = statusline_new(&g_config->statusline);
 
     win->view_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_hexpand(win->view_box, TRUE);
     gtk_widget_set_vexpand(win->view_box, TRUE);
     gtk_box_append(GTK_BOX(win->view_box), win->view);
-    gtk_box_append(GTK_BOX(win->view_box), win->statusline);
+    gtk_box_append(GTK_BOX(win->view_box), GTK_WIDGET(win->statusline));
 
     win->toc_search_entry = gtk_search_entry_new();
     g_signal_connect(win->toc_search_entry, "search-changed", G_CALLBACK(on_toc_search_changed), win);
@@ -203,11 +167,6 @@ static void window_init(Window *win)
     gtk_box_append(GTK_BOX(win->main_container), win->view_box);
 
     gtk_window_set_title(GTK_WINDOW(win), APP_NAME_STR);
-
-    css_provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(css_provider, css);
-    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
-        GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_USER);
 }
 
 static void window_finalize(GObject *object)
@@ -425,21 +384,6 @@ ViewerMarkManager *window_get_mark_manager(Window *win)
     return win->mark_manager;
 }
 
-GroupSelection *window_get_group_selection(Window *win)
-{
-    return win->selection;
-}
-
-Viewer *window_get_viewer(Window *win)
-{
-    return win->viewer;
-}
-
-Input *window_get_input(Window *win)
-{
-    return win->input;
-}
-
 static void window_redraw_document_windows(Window *win)
 {
     app_redraw_windows(win->app, win->mark_manager);
@@ -519,17 +463,18 @@ static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step)
 
 static void window_update_statusline(Window *win)
 {
-    gchar *statusline_left_str = statusline_section_to_str(g_config->statusline_left, win);
-    gchar *statusline_middle_str = statusline_section_to_str(g_config->statusline_middle, win);
-    gchar *statusline_right_str = statusline_section_to_str(g_config->statusline_right, win);
+    ViewerCursor *mark = group_selection_current_mark(win->selection);
+    StatuslineState state = {
+        .page = mark->current_page,
+        .n_pages = win->viewer->info->n_pages,
+        .scale = mark->scale,
+        .center_mode = mark->center_mode,
+        .group = group_selection_current_group(win->selection),
+        .mark = group_selection_current_mark_index(win->selection),
+        .pending_keys = input_pending(win->input),
+    };
 
-    gtk_label_set_text(GTK_LABEL(win->left_label), statusline_left_str);
-    gtk_label_set_text(GTK_LABEL(win->middle_label), statusline_middle_str);
-    gtk_label_set_text(GTK_LABEL(win->right_label), statusline_right_str);
-
-    g_free(statusline_left_str);
-    g_free(statusline_middle_str);
-    g_free(statusline_right_str);
+    statusline_update(win->statusline, &state);
 }
 
 static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,

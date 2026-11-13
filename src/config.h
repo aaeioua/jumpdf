@@ -2,7 +2,7 @@
 
 #include <glib.h>
 
-#include "statusline.h"
+#include "statusline_layout.h"
 
 typedef struct Config {
     gchar *file_chooser_initial_folder_path;
@@ -10,10 +10,7 @@ typedef struct Config {
     double min_scale;
     double scale_step;
 
-    gchar *statusline_separator;
-    GArray *statusline_left;
-    GArray *statusline_middle;
-    GArray *statusline_right;
+    StatuslineLayout statusline;
 } Config;
 
 extern Config *g_config;

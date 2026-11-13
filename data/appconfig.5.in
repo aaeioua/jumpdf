@@ -13,6 +13,8 @@ For Flatpak installations, the configuration file is located at `~/.var/app/io.g
 
 .SH CONFIGURATION OPTIONS
 .SS [Settings]
+Every key is optional. A key left out of the file uses its default value, as do all keys when the file has no [Settings] table. A key with an invalid value prints an error and uses its default value.
+
 .TP
 .B file_chooser_initial_folder_path
 Description: Specifies the initial folder path for the file chooser dialog.

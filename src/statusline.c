@@ -1,77 +1,97 @@
 #include "statusline.h"
-#include "config.h"
+#include "statusline_format.h"
 
-static gchar *statusline_component_to_str(StatuslineComponent component, Window *win);
+static const char *css =
+    ".statusline {"
+    "    background-color: black;"
+    "    color: white;"
+    "}";
 
-StatuslineComponent statusline_component_from_str(gchar *str)
+struct _Statusline {
+    GtkWidget parent;
+
+    const StatuslineLayout *layout;
+    GtkWidget *center_box;
+    GtkWidget *labels[STATUSLINE_N_SECTIONS];
+};
+
+G_DEFINE_TYPE(Statusline, statusline, GTK_TYPE_WIDGET)
+
+static void statusline_init(Statusline *self)
 {
-    if (g_strcmp0(str, "Page") == 0) {
-        return STATUSLINE_COMPONENT_PAGE;
-    } else if (g_strcmp0(str, "Center mode") == 0) {
-        return STATUSLINE_COMPONENT_CENTER_MODE;
-    } else if (g_strcmp0(str, "Scale") == 0) {
-        return STATUSLINE_COMPONENT_SCALE;
-    } else if (g_strcmp0(str, "Mark selection") == 0) {
-        return STATUSLINE_COMPONENT_MARK_SELECTION;
-    } else if (g_strcmp0(str, "Pending keys") == 0) {
-        return STATUSLINE_COMPONENT_PENDING_KEYS;
-    } else {
-        return 0;
+    self->layout = NULL;
+
+    for (int i = 0; i < STATUSLINE_N_SECTIONS; i++) {
+        self->labels[i] = gtk_label_new(NULL);
     }
+
+    self->center_box = gtk_center_box_new();
+    gtk_center_box_set_start_widget(GTK_CENTER_BOX(self->center_box),
+        self->labels[STATUSLINE_SECTION_LEFT]);
+    gtk_center_box_set_center_widget(GTK_CENTER_BOX(self->center_box),
+        self->labels[STATUSLINE_SECTION_MIDDLE]);
+    gtk_center_box_set_end_widget(GTK_CENTER_BOX(self->center_box),
+        self->labels[STATUSLINE_SECTION_RIGHT]);
+    gtk_widget_set_parent(self->center_box, GTK_WIDGET(self));
+
+    gtk_widget_add_css_class(GTK_WIDGET(self), "statusline");
 }
 
-gchar *statusline_section_to_str(GArray *section, Window *win)
+static void statusline_dispose(GObject *object)
 {
-    GStrv str_array = NULL;
-    char *final_str = NULL;
-    GStrvBuilder *builder = g_strv_builder_new();
-    StatuslineComponent component = 0;
-    gchar *component_str = NULL;
+    Statusline *self = JUMPDF_STATUSLINE(object);
 
-    for (guint i = 0; i < section->len; i++) {
-        component = g_array_index(section, StatuslineComponent, i);
-        component_str = statusline_component_to_str(component, win);
+    g_clear_pointer(&self->center_box, gtk_widget_unparent);
 
-        if (component_str != NULL) {
-            g_strv_builder_add(builder, component_str);
-            g_free(component_str);
+    G_OBJECT_CLASS(statusline_parent_class)->dispose(object);
+}
+
+static void statusline_install_css(void)
+{
+    GdkDisplay *display = gdk_display_get_default();
+    GtkCssProvider *provider;
+
+    if (display == NULL) {
+        return;
+    }
+
+    provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(provider, css);
+    gtk_style_context_add_provider_for_display(display,
+        GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_USER);
+    g_object_unref(provider);
+}
+
+static void statusline_class_init(StatuslineClass *class)
+{
+    G_OBJECT_CLASS(class)->dispose = statusline_dispose;
+    gtk_widget_class_set_layout_manager_type(GTK_WIDGET_CLASS(class),
+        GTK_TYPE_BIN_LAYOUT);
+
+    statusline_install_css();
+}
+
+Statusline *statusline_new(const StatuslineLayout *layout)
+{
+    Statusline *statusline = g_object_new(STATUSLINE_TYPE, NULL);
+
+    statusline->layout = layout;
+
+    return statusline;
+}
+
+void statusline_update(Statusline *statusline, const StatuslineState *state)
+{
+    gchar *text[STATUSLINE_N_SECTIONS];
+    GtkLabel *label;
+
+    statusline_format(statusline->layout, state, text);
+
+    for (int i = 0; i < STATUSLINE_N_SECTIONS; i++) {
+        label = GTK_LABEL(statusline->labels[i]);
+        if (g_strcmp0(gtk_label_get_text(label), text[i]) != 0) {
+            gtk_label_set_text(label, text[i]);
         }
-    }
-
-    str_array = g_strv_builder_end(builder);
-    g_strv_builder_unref(builder);
-
-    final_str = g_strjoinv(g_config->statusline_separator, str_array);
-    g_strfreev(str_array);
-
-    return final_str;
-}
-
-static gchar *statusline_component_to_str(StatuslineComponent component, Window *win)
-{
-    Viewer *viewer = window_get_viewer(win);
-    GroupSelection *selection = window_get_group_selection(win);
-    ViewerCursor *mark = group_selection_current_mark(selection);
-    const char *pending_keys;
-
-    switch (component) {
-    case STATUSLINE_COMPONENT_PAGE:
-        return g_strdup_printf("%d/%d",
-            mark->current_page + 1,
-            viewer->info->n_pages);
-    case STATUSLINE_COMPONENT_CENTER_MODE:
-        return mark->center_mode ? g_strdup("Center") : NULL;
-    case STATUSLINE_COMPONENT_SCALE:
-        return g_strdup_printf("%d%%",
-            (int)round(mark->scale * 100));
-    case STATUSLINE_COMPONENT_MARK_SELECTION:
-        return g_strdup_printf("%u:%u",
-            group_selection_current_group(selection) + 1,
-            group_selection_current_mark_index(selection) + 1);
-    case STATUSLINE_COMPONENT_PENDING_KEYS:
-        pending_keys = input_pending(window_get_input(win));
-        return pending_keys[0] == '\0' ? NULL : g_strdup(pending_keys);
-    default:
-        return NULL;
+        g_free(text[i]);
     }
 }
