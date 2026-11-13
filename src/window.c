@@ -472,6 +472,7 @@ static void window_update_statusline(Window *win)
         .group = group_selection_current_group(win->selection),
         .mark = group_selection_current_mark_index(win->selection),
         .pending_keys = input_pending(win->input),
+        .search_text = win->viewer->search->search_text,
     };
 
     statusline_update(win->statusline, &state);

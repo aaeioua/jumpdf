@@ -9,6 +9,7 @@ typedef enum StatuslineComponent {
     STATUSLINE_COMPONENT_SCALE,
     STATUSLINE_COMPONENT_MARK_SELECTION,
     STATUSLINE_COMPONENT_PENDING_KEYS,
+    STATUSLINE_COMPONENT_SEARCH,
 } StatuslineComponent;
 
 typedef enum {
@@ -31,6 +32,7 @@ typedef struct {
     unsigned int group;       /* 0-based Group index */
     unsigned int mark;        /* 0-based Mark index */
     const char *pending_keys;
+    const char *search_text;
 } StatuslineState;
 
 StatuslineComponent statusline_component_from_str(const char *str);

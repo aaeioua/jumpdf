@@ -2,6 +2,8 @@
 
 #include "statusline_format.h"
 
+#define SEARCH_MAX_CHARS 32
+
 static gchar *statusline_component_format(StatuslineComponent component,
     const StatuslineState *state)
 {
@@ -19,6 +21,18 @@ static gchar *statusline_component_format(StatuslineComponent component,
             return NULL;
         }
         return g_strdup(state->pending_keys);
+    case STATUSLINE_COMPONENT_SEARCH:
+        if (state->search_text == NULL || state->search_text[0] == '\0') {
+            return NULL;
+        }
+        if (g_utf8_strlen(state->search_text, -1) > SEARCH_MAX_CHARS) {
+            const char *cut = g_utf8_offset_to_pointer(state->search_text,
+                SEARCH_MAX_CHARS);
+
+            return g_strdup_printf("/%.*s…",
+                (int)(cut - state->search_text), state->search_text);
+        }
+        return g_strconcat("/", state->search_text, NULL);
     default:
         return NULL;
     }

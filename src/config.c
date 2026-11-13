@@ -286,6 +286,7 @@ static void statusline_section_load_default_left(GArray *section)
 {
     static const StatuslineComponent components[] = {
         STATUSLINE_COMPONENT_PAGE,
+        STATUSLINE_COMPONENT_SEARCH,
         STATUSLINE_COMPONENT_PENDING_KEYS,
     };
 

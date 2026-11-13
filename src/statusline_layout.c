@@ -12,6 +12,8 @@ StatuslineComponent statusline_component_from_str(const char *str)
         return STATUSLINE_COMPONENT_MARK_SELECTION;
     } else if (g_strcmp0(str, "Pending keys") == 0) {
         return STATUSLINE_COMPONENT_PENDING_KEYS;
+    } else if (g_strcmp0(str, "Search") == 0) {
+        return STATUSLINE_COMPONENT_SEARCH;
     } else {
         return 0;
     }
