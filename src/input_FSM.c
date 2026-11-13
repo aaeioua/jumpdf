@@ -29,42 +29,43 @@ InputState on_state_normal(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
     Viewer *viewer = window_get_viewer(window);
+    ViewerCursor *mark = viewer_current_mark(viewer);
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer->cursor->input_number = keyval - GDK_KEY_0;
+        mark->input_number = keyval - GDK_KEY_0;
         next_state = STATE_NUMBER;
     } else {
         switch (keyval) {
         case GDK_KEY_0:
-            viewer_cursor_set_scale(viewer->cursor, 1.0);
+            viewer_cursor_set_scale(mark, 1.0);
             break;
         case GDK_KEY_c:
-            viewer_cursor_toggle_center_mode(viewer->cursor);
+            viewer_cursor_toggle_center_mode(mark);
             break;
         case GDK_KEY_b:
-            viewer_cursor_toggle_dark_mode(viewer->cursor);
+            viewer_cursor_toggle_dark_mode(mark);
             break;
         case GDK_KEY_s:
-            viewport_fit_width(viewer->viewport, viewer->cursor);
+            viewport_fit_width(viewer->viewport, mark);
             break;
         case GDK_KEY_a:
-            viewport_fit_height(viewer->viewport, viewer->cursor);
+            viewport_fit_height(viewer->viewport, mark);
             break;
         case GDK_KEY_g:
             next_state = STATE_g;
             break;
         case GDK_KEY_Home:
-            viewer->cursor->current_page = 0;
-            viewer->cursor->y_offset = 0;
+            mark->current_page = 0;
+            mark->y_offset = 0;
             break;
         case GDK_KEY_G:
         case GDK_KEY_End:
-            viewer->cursor->current_page = viewer->info->n_pages - 1;
-            viewer->cursor->y_offset = 0;
+            mark->current_page = viewer->info->n_pages - 1;
+            mark->y_offset = 0;
             break;
         case GDK_KEY_f:
             viewer->links->follow_links_mode = true;
-            viewer->cursor->input_number = 0;
+            mark->input_number = 0;
             next_state = STATE_FOLLOW_LINKS;
             break;
         case GDK_KEY_m:
@@ -104,16 +105,16 @@ InputState on_state_normal(Window *window, guint keyval)
 InputState on_state_g(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     Viewer *viewer = window_get_viewer(window);
     unsigned int group_i = keyval - GDK_KEY_0 - 1;
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_switch_group(mark_manager, group_i);
+        group_selection_switch_group(selection, group_i);
     } else if (keyval == GDK_KEY_n) {
         viewer->last_command.execute = (CommandExecute)switch_to_previous_group;
         viewer->last_command.repeat_count = 1;
-        viewer->last_command.data = mark_manager;
+        viewer->last_command.data = NULL;
         viewer->last_jump_command = command_copy(&viewer->last_command);
 
         command_execute(&viewer->last_command, viewer);
@@ -122,8 +123,9 @@ InputState on_state_g(Window *window, guint keyval)
     } else if (keyval == GDK_KEY_o) {
         next_state = STATE_GROUP_OVERWRITE;
     } else if (keyval == GDK_KEY_g) {
-        viewer->cursor->current_page = 0;
-        viewer->cursor->y_offset = 0;
+        ViewerCursor *mark = viewer_current_mark(viewer);
+        mark->current_page = 0;
+        mark->y_offset = 0;
     }
 
     return next_state;
@@ -133,21 +135,22 @@ InputState on_state_number(Window *window, guint keyval)
 {
     InputState next_state;
     Viewer *viewer = window_get_viewer(window);
+    ViewerCursor *mark = viewer_current_mark(viewer);
 
     if (keyval >= GDK_KEY_0 && keyval <= GDK_KEY_9) {
-        viewer->cursor->input_number = viewer->cursor->input_number * 10 + (keyval - GDK_KEY_0);
+        mark->input_number = mark->input_number * 10 + (keyval - GDK_KEY_0);
         next_state = STATE_NUMBER;
     } else if (keyval == GDK_KEY_G) {
-        viewport_goto_page(viewer->viewport, viewer->cursor,
-            (int)viewer->cursor->input_number - 1);
-        viewer->cursor->input_number = 0;
+        viewport_goto_page(viewer->viewport, mark,
+            (int)mark->input_number - 1);
+        mark->input_number = 0;
         next_state = STATE_NORMAL;
     } else if (keyval == GDK_KEY_Shift_L || keyval == GDK_KEY_Shift_R) {
         // Ignore shift key. Necessary for GDK_KEY_G
         next_state = STATE_NUMBER;
     } else {
-        next_state = execute_command(window, keyval, viewer->cursor->input_number);
-        viewer->cursor->input_number = 0;
+        next_state = execute_command(window, keyval, mark->input_number);
+        mark->input_number = 0;
     }
 
     return next_state;
@@ -157,18 +160,19 @@ InputState on_state_follow_links(Window *window, guint keyval)
 {
     InputState next_state;
     Viewer *viewer = window_get_viewer(window);
+    ViewerCursor *mark = viewer_current_mark(viewer);
     PopplerLinkMapping *link_mapping;
 
     if (keyval >= GDK_KEY_0 && keyval <= GDK_KEY_9) {
-        viewer->cursor->input_number = viewer->cursor->input_number * 10 + (keyval - GDK_KEY_0);
+        mark->input_number = mark->input_number * 10 + (keyval - GDK_KEY_0);
         next_state = STATE_FOLLOW_LINKS;
-    } else if (keyval == GDK_KEY_Return && viewer->cursor->input_number - 1 < viewer->links->visible_links->len) {
-        link_mapping = g_ptr_array_index(viewer->links->visible_links, viewer->cursor->input_number - 1);
+    } else if (keyval == GDK_KEY_Return && mark->input_number - 1 < viewer->links->visible_links->len) {
+        link_mapping = g_ptr_array_index(viewer->links->visible_links, mark->input_number - 1);
         viewer_execute_action(viewer, link_mapping->action);
         viewer->links->follow_links_mode = false;
         next_state = STATE_NORMAL;
     } else {
-        viewer->cursor->input_number = 0;
+        mark->input_number = 0;
         viewer->links->follow_links_mode = false;
         next_state = STATE_NORMAL;
     }
@@ -234,11 +238,11 @@ InputState on_state_toc_focus(Window *window, guint keyval)
 InputState on_state_group_swap(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     unsigned int group_i = keyval - GDK_KEY_0 - 1;
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_swap_group(mark_manager, group_i);
+        group_selection_swap_group(selection, group_i);
     }
 
     return next_state;
@@ -247,11 +251,11 @@ InputState on_state_group_swap(Window *window, guint keyval)
 InputState on_state_group_overwrite(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     unsigned int group_i = keyval - GDK_KEY_0 - 1;
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_overwrite_group(mark_manager, group_i);
+        group_selection_overwrite_group(selection, group_i);
     }
 
     return next_state;
@@ -260,16 +264,16 @@ InputState on_state_group_overwrite(Window *window, guint keyval)
 InputState on_state_mark(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     unsigned int mark_i = keyval - GDK_KEY_0 - 1;
     Viewer *viewer = window_get_viewer(window);
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_switch_mark(mark_manager, mark_i);
+        group_selection_switch_mark(selection, mark_i);
     } else if (keyval == GDK_KEY_n) {
         viewer->last_command.execute = (CommandExecute)switch_to_previous_mark;
         viewer->last_command.repeat_count = 1;
-        viewer->last_command.data = mark_manager;
+        viewer->last_command.data = NULL;
         viewer->last_jump_command = command_copy(&viewer->last_command);
 
         command_execute(&viewer->last_command, viewer);
@@ -287,11 +291,11 @@ InputState on_state_mark(Window *window, guint keyval)
 InputState on_state_mark_clear(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     unsigned int mark_i = keyval - GDK_KEY_0 - 1;
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_clear_mark(mark_manager, mark_i);
+        group_selection_clear_mark(selection, mark_i);
     }
 
     return next_state;
@@ -300,11 +304,11 @@ InputState on_state_mark_clear(Window *window, guint keyval)
 InputState on_state_mark_swap(Window *window, guint keyval)
 {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     unsigned int mark_i = keyval - GDK_KEY_0 - 1;
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_swap_mark(mark_manager, mark_i);
+        group_selection_swap_mark(selection, mark_i);
     }
 
     return next_state;
@@ -312,11 +316,11 @@ InputState on_state_mark_swap(Window *window, guint keyval)
 
 InputState on_state_mark_overwrite(Window *window, guint keyval) {
     InputState next_state = STATE_NORMAL;
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
+    GroupSelection *selection = window_get_group_selection(window);
     unsigned int mark_i = keyval - GDK_KEY_0 - 1;
 
     if (keyval >= GDK_KEY_1 && keyval <= GDK_KEY_9) {
-        viewer_mark_manager_overwrite_mark(mark_manager, mark_i);
+        group_selection_overwrite_mark(selection, mark_i);
     }
 
     return next_state;
@@ -331,7 +335,6 @@ static InputState execute_command(Window *window, guint keyval, unsigned int rep
 {
     InputState next_state = STATE_NORMAL;
     Viewer *viewer = window_get_viewer(window);
-    ViewerMarkManager *mark_manager = window_get_mark_manager(window);
 
     switch (keyval) {
     case GDK_KEY_plus:
@@ -383,12 +386,12 @@ static InputState execute_command(Window *window, guint keyval, unsigned int rep
     case GDK_KEY_n:
         viewer->last_command.execute = (CommandExecute)forward_search;
         viewer->last_command.repeat_count = repeat_count;
-        viewer->last_command.data = mark_manager;
+        viewer->last_command.data = NULL;
         break;
     case GDK_KEY_N:
         viewer->last_command.execute = (CommandExecute)backward_search;
         viewer->last_command.repeat_count = repeat_count;
-        viewer->last_command.data = mark_manager;
+        viewer->last_command.data = NULL;
         break;
     default:
         /* Avoid executing the last command if no key was matched */

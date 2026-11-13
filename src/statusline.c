@@ -48,22 +48,23 @@ gchar *statusline_section_to_str(GArray *section, Window *win)
 static gchar *statusline_component_to_str(StatuslineComponent component, Window *win)
 {
     Viewer *viewer = window_get_viewer(win);
-    ViewerMarkManager *mark_manager = window_get_mark_manager(win);
+    GroupSelection *selection = window_get_group_selection(win);
+    ViewerCursor *mark = group_selection_current_mark(selection);
 
     switch (component) {
     case STATUSLINE_COMPONENT_PAGE:
         return g_strdup_printf("%d/%d",
-            viewer->cursor->current_page + 1,
+            mark->current_page + 1,
             viewer->info->n_pages);
     case STATUSLINE_COMPONENT_CENTER_MODE:
-        return viewer->cursor->center_mode ? g_strdup("Center") : NULL;
+        return mark->center_mode ? g_strdup("Center") : NULL;
     case STATUSLINE_COMPONENT_SCALE:
         return g_strdup_printf("%d%%",
-            (int)round(viewer->cursor->scale * 100));
+            (int)round(mark->scale * 100));
     case STATUSLINE_COMPONENT_MARK_SELECTION:
         return g_strdup_printf("%u:%u",
-            viewer_mark_manager_get_current_group_index(mark_manager) + 1,
-            viewer_mark_manager_get_current_mark_index(mark_manager) + 1);
+            group_selection_current_group(selection) + 1,
+            group_selection_current_mark_index(selection) + 1);
     default:
         return NULL;
     }

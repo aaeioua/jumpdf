@@ -62,8 +62,7 @@ static const Keybinding keybindings[] = {
     {"?", "Show help dialog", 0}
 };
 
-static void window_update_cursors(Window *win);
-static void window_redraw_all_windows(Window *win);
+static void window_redraw_document_windows(Window *win);
 static void window_update_statusline(Window *win);
 static void window_populate_toc(Window *win);
 static void window_add_toc_entries(Window *win, PopplerIndexIter *iter, int level);
@@ -121,6 +120,7 @@ struct _Window {
     App *app;
     char *uri;
     ViewerMarkManager *mark_manager;
+    GroupSelection *selection;
     Viewer *viewer;
     Renderer *renderer;
     bool first_draw;
@@ -134,6 +134,8 @@ static void window_init(Window *win)
     GtkCssProvider *css_provider;
 
     win->uri = NULL;
+    win->mark_manager = NULL;
+    win->selection = NULL;
     win->viewer = NULL;
     win->renderer = NULL;
     win->first_draw = TRUE;
@@ -250,13 +252,14 @@ static void window_finalize(GObject *object)
     viewer_destroy(win->viewer);
     win->viewer = NULL;
 
+    viewer_mark_manager_detach(win->selection);
+    win->selection = NULL;
+    win->mark_manager = NULL;
+
     if (win->uri != NULL) {
         app_save_document(win->app, win->uri);
         g_clear_pointer(&win->uri, g_free);
     }
-
-    app_release_mark_manager(win->app, win->mark_manager);
-    win->mark_manager = NULL;
 
     app_remove_window(win->app, win);
 
@@ -280,19 +283,18 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     ViewerInfo *info)
 {
     GError *error = NULL;
-    ViewerCursor *cursor;
     ViewerSearch *search;
     ViewerLinks *links;
     GFileInfo *file_info;
     double default_width, default_height;
 
-    cursor = viewer_mark_manager_get_current_cursor(mark_manager);
     search = viewer_search_new();
     links = viewer_links_new();
 
     win->uri = g_file_get_uri(file);
     win->mark_manager = mark_manager;
-    win->viewer = viewer_new(info, cursor, search, links);
+    win->selection = viewer_mark_manager_attach(mark_manager);
+    win->viewer = viewer_new(info, win->selection, search, links);
     win->renderer = renderer_new(win->view);
 
     window_populate_toc(win);
@@ -310,13 +312,6 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     poppler_page_get_size(viewer_info_get_poppler_page(win->viewer->info, 0), &default_width, &default_height);
     gtk_window_set_default_size(GTK_WINDOW(win), (int)default_width,
         (int)default_width);
-}
-
-void window_update_cursor(Window *win)
-{
-    win->viewer->cursor = viewer_mark_manager_get_current_cursor(win->mark_manager);
-    viewer_cursor_handle_offset_update(win->viewer->cursor,
-        win->viewer->info->n_pages);
 }
 
 void window_redraw(Window *win)
@@ -446,7 +441,7 @@ void window_execute_toc_row(Window *win, GtkListBoxRow *row)
 
         if (dest) {
             viewer_goto_dest(win->viewer, dest);
-            window_redraw_all_windows(win);
+            window_redraw_document_windows(win);
         } else {
             g_printerr("Error: TOC entry has no destination\n");
         }
@@ -456,6 +451,11 @@ void window_execute_toc_row(Window *win, GtkListBoxRow *row)
 ViewerMarkManager *window_get_mark_manager(Window *win)
 {
     return win->mark_manager;
+}
+
+GroupSelection *window_get_group_selection(Window *win)
+{
+    return win->selection;
 }
 
 Viewer *window_get_viewer(Window *win)
@@ -468,14 +468,9 @@ GtkListBox *window_get_toc_listbox(Window *win)
     return GTK_LIST_BOX(win->toc_container);
 }
 
-static void window_update_cursors(Window *win)
+static void window_redraw_document_windows(Window *win)
 {
-    app_update_cursors(win->app);
-}
-
-static void window_redraw_all_windows(Window *win)
-{
-    app_redraw_windows(win->app);
+    app_redraw_windows(win->app, win->mark_manager);
 }
 
 static void window_update_statusline(Window *win)
@@ -504,8 +499,9 @@ static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,
     Window *win = (Window *)user_data;
 
     win->current_input_state = execute_state(win->current_input_state, win, keyval);
-    window_update_cursors(win);
-    window_redraw_all_windows(win);
+    viewer_cursor_handle_offset_update(viewer_current_mark(win->viewer),
+        win->viewer->info->n_pages);
+    window_redraw_document_windows(win);
 
     return TRUE;
 }
@@ -516,8 +512,10 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx,
     Window *win;
     GdkEvent *event;
     GdkModifierType state;
+    ViewerCursor *mark;
 
     win = (Window *)user_data;
+    mark = viewer_current_mark(win->viewer);
 
     event =
         gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller));
@@ -525,18 +523,17 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx,
         state = gdk_event_get_modifier_state(event);
         switch (state) {
         case GDK_CONTROL_MASK:
-            viewer_cursor_set_scale(win->viewer->cursor, win->viewer->cursor->scale - dy * g_config->scale_step);
+            viewer_cursor_set_scale(mark, mark->scale - dy * g_config->scale_step);
             break;
         default:
-            win->viewer->cursor->x_offset -= dx;
-            win->viewer->cursor->y_offset += dy;
+            mark->x_offset -= dx;
+            mark->y_offset += dy;
 
-            viewer_cursor_handle_offset_update(win->viewer->cursor,
-                win->viewer->info->n_pages);
+            viewer_cursor_handle_offset_update(mark, win->viewer->info->n_pages);
         }
     }
 
-    window_redraw_all_windows(win);
+    window_redraw_document_windows(win);
 }
 
 static void on_resize(GtkDrawingArea *area, int width, int height,

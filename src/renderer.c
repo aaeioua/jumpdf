@@ -154,19 +154,21 @@ void renderer_destroy(Renderer *renderer)
 
 void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer)
 {
+    const ViewerCursor *mark = viewer_current_mark(viewer);
+
     renderer_ensure_page_states(renderer, viewer);
 
-    if (viewer->cursor->dark_mode) {
+    if (mark->dark_mode) {
         cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
         cairo_paint(cr);
     }
 
-    ViewportLayout layout = viewport_layout(viewer->viewport, viewer->cursor);
+    ViewportLayout layout = viewport_layout(viewer->viewport, mark);
     for (int i = layout.from; i <= layout.to; i++) {
         renderer_draw_page(renderer, cr, viewer->viewport, &layout, i);
     }
 
-    if (viewer->cursor->dark_mode) {
+    if (mark->dark_mode) {
         cairo_set_operator(cr, CAIRO_OPERATOR_DIFFERENCE);
         cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
         cairo_paint(cr);
@@ -177,7 +179,8 @@ void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
 {
     renderer_ensure_page_states(renderer, viewer);
 
-    ViewportLayout layout = viewport_layout(viewer->viewport, viewer->cursor);
+    ViewportLayout layout = viewport_layout(viewer->viewport,
+        viewer_current_mark(viewer));
     const int visible_from = layout.from;
     const int visible_to = layout.to;
     const int requested_from = MAX(0, visible_from - PREFETCH_PAGES);

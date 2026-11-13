@@ -7,9 +7,7 @@
 #include "utils.h"
 #include "mark_store.h"
 
-static void window_update_cursor_cb(gpointer win_ptr, gpointer user_data);
-static void window_redraw_cb(gpointer win_ptr, gpointer user_data);
-static gboolean mark_manager_equal_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data);
+static void window_redraw_cb(gpointer win_ptr, gpointer manager_ptr);
 static void save_all_documents(App *app);
 
 static void on_file_dialog_response(GObject *source_object, GAsyncResult *res, gpointer user_data);
@@ -20,8 +18,9 @@ struct _App {
     /*
     * Key: URI
     * Value: ViewerMarkManager *
-    * NOTE: a URI can have multiple mark managers with the same groups,
-    * but with a different current_group. The value here is just a default
+    * NOTE: one Mark Manager per document, shared by every window on it.
+    * Each window attaches its own Group selection. Kept from first open
+    * until exit, so closing a window only detaches its selection.
     */
     GHashTable *uri_mark_manager_map;
     GPtrArray *windows;
@@ -144,16 +143,10 @@ App *app_new(void)
 ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
 {
     char *uri = g_file_get_uri(file);
-    ViewerMarkManager *original = g_hash_table_lookup(app->uri_mark_manager_map, uri);
-    ViewerMarkManager *mark_manager = NULL;
+    ViewerMarkManager *mark_manager = g_hash_table_lookup(app->uri_mark_manager_map, uri);
 
-    if (original != NULL) {
+    if (mark_manager != NULL) {
         g_free(uri);
-
-        // Copy to have the same groups and marks, but different selections
-        mark_manager = viewer_mark_manager_copy(original);
-        viewer_mark_manager_ensure_current_mark(mark_manager);
-
         return mark_manager;
     }
 
@@ -166,31 +159,14 @@ ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
     return mark_manager;
 }
 
-void app_release_mark_manager(App *app, ViewerMarkManager *manager)
-{
-    if (manager == NULL) {
-        return;
-    }
-
-    if (g_hash_table_find(app->uri_mark_manager_map, mark_manager_equal_cb,
-            manager) == NULL) {
-        viewer_mark_manager_free_copy(manager);
-    }
-}
-
 void app_remove_window(App *app, Window *win)
 {
     g_ptr_array_remove_fast(app->windows, win);
 }
 
-void app_update_cursors(App *app)
+void app_redraw_windows(App *app, ViewerMarkManager *manager)
 {
-    g_ptr_array_foreach(app->windows, window_update_cursor_cb, NULL);
-}
-
-void app_redraw_windows(App *app)
-{
-    g_ptr_array_foreach(app->windows, window_redraw_cb, NULL);
+    g_ptr_array_foreach(app->windows, window_redraw_cb, manager);
 }
 
 void app_save_document(App *app, const char *uri)
@@ -217,22 +193,13 @@ void app_open_file_chooser(App *app)
     gtk_file_dialog_open_multiple(file_dialog, NULL, NULL, (GAsyncReadyCallback)on_file_dialog_response, app);
 }
 
-static void window_update_cursor_cb(gpointer win_ptr, gpointer user_data)
+static void window_redraw_cb(gpointer win_ptr, gpointer manager_ptr)
 {
-    UNUSED(user_data);
-
     Window *win = win_ptr;
 
-    window_update_cursor(win);
-}
-
-static void window_redraw_cb(gpointer win_ptr, gpointer user_data)
-{
-    UNUSED(user_data);
-
-    Window *win = win_ptr;
-
-    window_redraw(win);
+    if (window_get_mark_manager(win) == manager_ptr) {
+        window_redraw(win);
+    }
 }
 
 static void save_all_documents(App *app)
@@ -244,13 +211,6 @@ static void save_all_documents(App *app)
     while (g_hash_table_iter_next(&iter, &uri, NULL)) {
         app_save_document(app, uri);
     }
-}
-
-static gboolean mark_manager_equal_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data)
-{
-    UNUSED(uri_ptr);
-
-    return manager_ptr == user_data;
 }
 
 static void on_file_dialog_response(GObject *source_object, GAsyncResult *res, gpointer user_data)

@@ -2,6 +2,16 @@
 
 #include "viewer_mark_manager.h"
 
+struct GroupSelection {
+    ViewerMarkManager *manager;
+    unsigned int current_group;
+    unsigned int previous_group;
+};
+
+static ViewerMarkGroup *selection_group(const GroupSelection *selection);
+static void remember_selection(const GroupSelection *selection);
+static unsigned int swapped_index(unsigned int index, unsigned int a, unsigned int b);
+
 ViewerMarkManager *viewer_mark_manager_new(ViewerMarkGroup *groups[NUM_GROUPS], unsigned int current_group, unsigned int previous_group)
 {
     ViewerMarkManager *manager = malloc(sizeof(ViewerMarkManager));
@@ -29,11 +39,6 @@ ViewerMarkManager *viewer_mark_manager_new_default(void)
     return manager;
 }
 
-ViewerMarkManager *viewer_mark_manager_copy(ViewerMarkManager *manager)
-{
-    return viewer_mark_manager_new(manager->groups, manager->current_group, manager->previous_group);
-}
-
 void viewer_mark_manager_init(ViewerMarkManager *manager, ViewerMarkGroup *groups[NUM_GROUPS], unsigned int current_group, unsigned int previous_group)
 {
     if (manager == NULL) {
@@ -46,21 +51,19 @@ void viewer_mark_manager_init(ViewerMarkManager *manager, ViewerMarkGroup *group
 
     manager->current_group = current_group;
     manager->previous_group = previous_group;
+    manager->selections = NULL;
 }
 
 void viewer_mark_manager_destroy(ViewerMarkManager *manager)
 {
+    g_return_if_fail(manager->selections == NULL);
+
     for (unsigned int i = 0; i < NUM_GROUPS; i++) {
         viewer_mark_group_destroy(manager->groups[i]);
         free(manager->groups[i]);
     }
 
     free(manager);
-}
-
-void viewer_mark_manager_free_copy(ViewerMarkManager *copy)
-{
-    free(copy);
 }
 
 void viewer_mark_manager_set_mark(ViewerMarkManager *manager, ViewerCursor *cursor, unsigned int group_i, unsigned int mark_i)
@@ -73,164 +76,217 @@ ViewerCursor *viewer_mark_manager_get_mark(ViewerMarkManager *manager, unsigned 
     return manager->groups[group_i]->marks[mark_i];
 }
 
-void viewer_mark_manager_set_current_group(ViewerMarkManager *manager, unsigned int group_i)
-{
-    manager->previous_group = manager->current_group;
-    manager->current_group = group_i;
-}
-
-unsigned int viewer_mark_manager_get_current_group_index(ViewerMarkManager *manager)
-{
-    return manager->current_group;
-}
-
-void viewer_mark_manager_set_current_mark(ViewerMarkManager *manager, unsigned int mark_i)
-{
-    manager->groups[manager->current_group]->previous_mark = manager->groups[manager->current_group]->current_mark;
-    manager->groups[manager->current_group]->current_mark = mark_i;
-}
-
-unsigned int viewer_mark_manager_get_current_mark_index(ViewerMarkManager *manager)
-{
-    return manager->groups[manager->current_group]->current_mark;
-}
-
-ViewerCursor *viewer_mark_manager_get_current_cursor(ViewerMarkManager *manager)
-{
-    ViewerMarkGroup *group = manager->groups[manager->current_group];
-    return group->marks[group->current_mark];
-}
-
-void viewer_mark_manager_set_current_cursor(ViewerMarkManager *manager, ViewerCursor *cursor)
-{
-    ViewerMarkGroup *group = manager->groups[manager->current_group];
-    group->marks[group->current_mark] = cursor;
-}
-
 void viewer_mark_manager_ensure_current_mark(ViewerMarkManager *manager)
 {
-    if (viewer_mark_manager_get_current_cursor(manager) == NULL) {
-        viewer_mark_manager_set_current_cursor(manager,
-            viewer_cursor_new(0, 0.0, 0.0, 1.0, true, false, 0));
+    ViewerMarkGroup *group = manager->groups[manager->current_group];
+
+    if (group->marks[group->current_mark] == NULL) {
+        group->marks[group->current_mark] =
+            viewer_cursor_new(0, 0.0, 0.0, 1.0, true, false, 0);
     }
 }
 
-void viewer_mark_manager_switch_group(ViewerMarkManager *manager, unsigned int group_i)
+GroupSelection *viewer_mark_manager_attach(ViewerMarkManager *manager)
 {
-    ViewerCursor *old_cursor = viewer_mark_manager_get_current_cursor(manager);
-    ViewerCursor *next_cursor = NULL;
-
-    viewer_mark_manager_set_current_group(manager, group_i);
-    next_cursor = viewer_mark_manager_get_current_cursor(manager);
-    if (next_cursor == NULL) {
-        viewer_mark_manager_set_current_cursor(manager, viewer_cursor_copy(old_cursor));
+    GroupSelection *selection = malloc(sizeof(GroupSelection));
+    if (selection == NULL) {
+        return NULL;
     }
+
+    selection->manager = manager;
+    selection->current_group = manager->current_group;
+    selection->previous_group = manager->previous_group;
+    manager->selections = g_slist_prepend(manager->selections, selection);
+
+    viewer_mark_manager_ensure_current_mark(manager);
+
+    return selection;
 }
 
-void viewer_mark_manager_switch_to_previous_group(ViewerMarkManager *manager)
+void viewer_mark_manager_detach(GroupSelection *selection)
 {
-    viewer_mark_manager_switch_group(manager, manager->previous_group);
-}
-
-void viewer_mark_manager_swap_group(ViewerMarkManager *manager, unsigned int group_i)
-{
-    unsigned int current_group_i = manager->current_group;
-    ViewerMarkGroup *current_group = manager->groups[current_group_i];
-    ViewerMarkGroup *stored_group = manager->groups[group_i];
-
-    manager->groups[current_group_i] = stored_group;
-    manager->groups[group_i] = current_group;
-
-    viewer_mark_manager_switch_group(manager, group_i);
-}
-
-void viewer_mark_manager_overwrite_group(ViewerMarkManager *manager, unsigned int group_i)
-{
-    if (group_i == manager->current_group) {
+    if (selection == NULL) {
         return;
     }
 
-    ViewerCursor *stored_cursor = NULL;
-    ViewerCursor *cursor_in_current_group = NULL;
-    ViewerCursor *cloned_cursor = NULL;
+    ViewerMarkManager *manager = selection->manager;
+
+    remember_selection(selection);
+    manager->selections = g_slist_remove(manager->selections, selection);
+
+    free(selection);
+}
+
+ViewerCursor *group_selection_current_mark(const GroupSelection *selection)
+{
+    ViewerMarkGroup *group = selection_group(selection);
+    return group->marks[group->current_mark];
+}
+
+unsigned int group_selection_current_group(const GroupSelection *selection)
+{
+    return selection->current_group;
+}
+
+unsigned int group_selection_current_mark_index(const GroupSelection *selection)
+{
+    return selection_group(selection)->current_mark;
+}
+
+void group_selection_switch_group(GroupSelection *selection, unsigned int group_i)
+{
+    if (group_i == selection->current_group) {
+        return;
+    }
+
+    ViewerCursor *old_mark = group_selection_current_mark(selection);
+    ViewerMarkGroup *group;
+
+    selection->previous_group = selection->current_group;
+    selection->current_group = group_i;
+
+    group = selection_group(selection);
+    if (group->marks[group->current_mark] == NULL) {
+        group->marks[group->current_mark] = viewer_cursor_copy(old_mark);
+    }
+
+    remember_selection(selection);
+}
+
+void group_selection_switch_to_previous_group(GroupSelection *selection)
+{
+    group_selection_switch_group(selection, selection->previous_group);
+}
+
+void group_selection_swap_group(GroupSelection *selection, unsigned int group_i)
+{
+    if (group_i == selection->current_group) {
+        return;
+    }
+
+    ViewerMarkManager *manager = selection->manager;
+    const unsigned int current_i = selection->current_group;
+    ViewerMarkGroup *current = manager->groups[current_i];
+
+    manager->groups[current_i] = manager->groups[group_i];
+    manager->groups[group_i] = current;
+
+    for (GSList *l = manager->selections; l != NULL; l = l->next) {
+        GroupSelection *other = l->data;
+        other->current_group = swapped_index(other->current_group, current_i, group_i);
+        other->previous_group = swapped_index(other->previous_group, current_i, group_i);
+    }
+
+    selection->previous_group = current_i;
+    remember_selection(selection);
+}
+
+void group_selection_overwrite_group(GroupSelection *selection, unsigned int group_i)
+{
+    if (group_i == selection->current_group) {
+        return;
+    }
+
+    ViewerMarkGroup *source = selection_group(selection);
+    ViewerMarkGroup *target = selection->manager->groups[group_i];
 
     for (unsigned int i = 0; i < NUM_MARKS; i++) {
-        stored_cursor = viewer_mark_manager_get_mark(manager, group_i, i);
-        viewer_cursor_destroy(stored_cursor);
-        free(stored_cursor);
-        viewer_mark_manager_set_mark(manager, NULL, group_i, i);
-
-        cursor_in_current_group = viewer_mark_manager_get_mark(manager, manager->current_group, i);
-        if (cursor_in_current_group != NULL) {
-            cloned_cursor = viewer_cursor_copy(cursor_in_current_group);
-            viewer_mark_manager_set_mark(manager, cloned_cursor, group_i, i);
-        }
+        viewer_cursor_destroy(target->marks[i]);
+        free(target->marks[i]);
+        target->marks[i] = source->marks[i] == NULL
+            ? NULL
+            : viewer_cursor_copy(source->marks[i]);
     }
 
-    ViewerMarkGroup *group = manager->groups[group_i];
-    group->current_mark = manager->groups[manager->current_group]->current_mark;
-    group->previous_mark = manager->groups[manager->current_group]->previous_mark;
+    target->current_mark = source->current_mark;
+    target->previous_mark = source->previous_mark;
 
-    viewer_mark_manager_switch_group(manager, group_i);
+    group_selection_switch_group(selection, group_i);
 }
 
-void viewer_mark_manager_switch_mark(ViewerMarkManager *manager, unsigned int mark_i)
+void group_selection_switch_mark(GroupSelection *selection, unsigned int mark_i)
 {
-    unsigned int group_i = viewer_mark_manager_get_current_group_index(manager);
-    ViewerCursor *stored_cursor = viewer_mark_manager_get_mark(manager, group_i, mark_i);
-    ViewerCursor *current_cursor = viewer_mark_manager_get_current_cursor(manager);
+    ViewerMarkGroup *group = selection_group(selection);
 
-    if (stored_cursor == NULL) {
-        viewer_mark_manager_set_mark(manager, viewer_cursor_copy(current_cursor), group_i, mark_i);
+    if (mark_i == group->current_mark) {
+        return;
     }
 
-    viewer_mark_manager_set_current_mark(manager, mark_i);
-}
-
-void viewer_mark_manager_switch_to_previous_mark(ViewerMarkManager *manager)
-{
-    unsigned int group_i = viewer_mark_manager_get_current_group_index(manager);
-    unsigned int previous_mark = manager->groups[group_i]->previous_mark;
-
-    viewer_mark_manager_switch_mark(manager, previous_mark);
-}
-
-void viewer_mark_manager_clear_mark(ViewerMarkManager *manager, unsigned int mark_i)
-{
-    unsigned int group_i = viewer_mark_manager_get_current_group_index(manager);
-    ViewerCursor *stored_cursor = viewer_mark_manager_get_mark(manager, group_i, mark_i);
-    ViewerCursor *current_cursor = viewer_mark_manager_get_current_cursor(manager);
-
-    if (stored_cursor != current_cursor) {
-        viewer_cursor_destroy(stored_cursor);
-        free(stored_cursor);
-        viewer_mark_manager_set_mark(manager, NULL, group_i, mark_i);
+    if (group->marks[mark_i] == NULL) {
+        group->marks[mark_i] = viewer_cursor_copy(group->marks[group->current_mark]);
     }
+
+    group->previous_mark = group->current_mark;
+    group->current_mark = mark_i;
 }
 
-void viewer_mark_manager_swap_mark(ViewerMarkManager *manager, unsigned int mark_i)
+void group_selection_switch_to_previous_mark(GroupSelection *selection)
 {
-    unsigned int group_i = viewer_mark_manager_get_current_group_index(manager);
-    unsigned int current_mark_i = viewer_mark_manager_get_current_mark_index(manager);
-    ViewerCursor *current_cursor = viewer_mark_manager_get_current_cursor(manager);
-    ViewerCursor *stored_cursor = viewer_mark_manager_get_mark(manager, group_i, mark_i);
-
-    viewer_mark_manager_set_mark(manager, current_cursor, group_i, mark_i);
-    viewer_mark_manager_set_mark(manager, stored_cursor, group_i, current_mark_i);
-    viewer_mark_manager_set_current_mark(manager, mark_i);
+    group_selection_switch_mark(selection, selection_group(selection)->previous_mark);
 }
 
-void viewer_mark_manager_overwrite_mark(ViewerMarkManager *manager, unsigned int mark_i)
+void group_selection_clear_mark(GroupSelection *selection, unsigned int mark_i)
 {
-    unsigned int group_i = viewer_mark_manager_get_current_group_index(manager);
-    ViewerCursor *stored_cursor = viewer_mark_manager_get_mark(manager, group_i, mark_i);
-    ViewerCursor *current_cursor = viewer_mark_manager_get_current_cursor(manager);
+    ViewerMarkGroup *group = selection_group(selection);
 
-    if (stored_cursor != current_cursor) {
-        viewer_cursor_destroy(stored_cursor);
-        free(stored_cursor);
+    if (mark_i == group->current_mark) {
+        return;
+    }
 
-        viewer_mark_manager_set_mark(manager, viewer_cursor_copy(current_cursor), group_i, mark_i);
-        viewer_mark_manager_set_current_mark(manager, mark_i);
+    viewer_cursor_destroy(group->marks[mark_i]);
+    free(group->marks[mark_i]);
+    group->marks[mark_i] = NULL;
+}
+
+void group_selection_swap_mark(GroupSelection *selection, unsigned int mark_i)
+{
+    ViewerMarkGroup *group = selection_group(selection);
+
+    if (mark_i == group->current_mark) {
+        return;
+    }
+
+    ViewerCursor *current = group->marks[group->current_mark];
+
+    group->marks[group->current_mark] = group->marks[mark_i];
+    group->marks[mark_i] = current;
+    group->previous_mark = group->current_mark;
+    group->current_mark = mark_i;
+}
+
+void group_selection_overwrite_mark(GroupSelection *selection, unsigned int mark_i)
+{
+    ViewerMarkGroup *group = selection_group(selection);
+
+    if (mark_i == group->current_mark) {
+        return;
+    }
+
+    viewer_cursor_destroy(group->marks[mark_i]);
+    free(group->marks[mark_i]);
+    group->marks[mark_i] = viewer_cursor_copy(group->marks[group->current_mark]);
+    group->previous_mark = group->current_mark;
+    group->current_mark = mark_i;
+}
+
+static ViewerMarkGroup *selection_group(const GroupSelection *selection)
+{
+    return selection->manager->groups[selection->current_group];
+}
+
+static void remember_selection(const GroupSelection *selection)
+{
+    selection->manager->current_group = selection->current_group;
+    selection->manager->previous_group = selection->previous_group;
+}
+
+static unsigned int swapped_index(unsigned int index, unsigned int a, unsigned int b)
+{
+    if (index == a) {
+        return b;
+    } else if (index == b) {
+        return a;
+    } else {
+        return index;
     }
 }
