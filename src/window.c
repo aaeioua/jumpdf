@@ -119,6 +119,7 @@ struct _Window {
     gtk_window_get_application not viable.
     */
     App *app;
+    char *uri;
     ViewerMarkManager *mark_manager;
     Viewer *viewer;
     Renderer *renderer;
@@ -132,6 +133,7 @@ static void window_init(Window *win)
 {
     GtkCssProvider *css_provider;
 
+    win->uri = NULL;
     win->viewer = NULL;
     win->renderer = NULL;
     win->first_draw = TRUE;
@@ -248,6 +250,11 @@ static void window_finalize(GObject *object)
     viewer_destroy(win->viewer);
     win->viewer = NULL;
 
+    if (win->uri != NULL) {
+        app_save_document(win->app, win->uri);
+        g_clear_pointer(&win->uri, g_free);
+    }
+
     app_release_mark_manager(win->app, win->mark_manager);
     win->mark_manager = NULL;
 
@@ -283,6 +290,7 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     search = viewer_search_new();
     links = viewer_links_new();
 
+    win->uri = g_file_get_uri(file);
     win->mark_manager = mark_manager;
     win->viewer = viewer_new(info, cursor, search, links);
     win->renderer = renderer_new(win->view);

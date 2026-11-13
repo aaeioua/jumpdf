@@ -5,12 +5,12 @@
 #include "project_config.h"
 #include "config.h"
 #include "utils.h"
-#include "database.h"
+#include "mark_store.h"
 
 static void window_update_cursor_cb(gpointer win_ptr, gpointer user_data);
 static void window_redraw_cb(gpointer win_ptr, gpointer user_data);
-static void database_update_mark_manager_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data);
 static gboolean mark_manager_equal_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data);
+static void save_all_documents(App *app);
 
 static void on_file_dialog_response(GObject *source_object, GAsyncResult *res, gpointer user_data);
 
@@ -25,7 +25,7 @@ struct _App {
     */
     GHashTable *uri_mark_manager_map;
     GPtrArray *windows;
-    Database *db;
+    MarkStore *mark_store;
 };
 
 G_DEFINE_TYPE(App, app, GTK_TYPE_APPLICATION)
@@ -41,35 +41,55 @@ int app_run(int argc, char *argv[])
 
 static void app_init(App *app)
 {
-    gchar *db_filename = NULL;
+    app->uri_mark_manager_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)viewer_mark_manager_destroy);
+    app->windows = g_ptr_array_new();
+}
+
+static void app_startup(GApplication *application)
+{
+    App *app = JUMPDF_APP(application);
+    GError *error = NULL;
+    gchar *store_path = NULL;
+
+    G_APPLICATION_CLASS(app_parent_class)->startup(application);
 
     g_config = config_new();
     config_load(g_config);
 
-    db_filename = g_build_filename(g_get_user_data_dir(), APP_NAME_STR, "jumpdf.db", NULL);
-    ensure_path_exists(db_filename);
-    app->db = database_open(db_filename);
-    database_check_update(app->db);
-    g_free(db_filename);
+    store_path = g_build_filename(g_get_user_data_dir(), APP_NAME_STR, "jumpdf.db", NULL);
+    app->mark_store = mark_store_open(store_path, &error);
+    if (app->mark_store == NULL) {
+        g_printerr("Marks will not be saved this session: %s\n", error->message);
+        g_error_free(error);
+    }
+    g_free(store_path);
+}
 
-    app->uri_mark_manager_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)viewer_mark_manager_destroy);
-    app->windows = g_ptr_array_new();
+static void app_shutdown(GApplication *application)
+{
+    App *app = JUMPDF_APP(application);
+
+    save_all_documents(app);
+    mark_store_close(app->mark_store);
+    app->mark_store = NULL;
+
+    G_APPLICATION_CLASS(app_parent_class)->shutdown(application);
 }
 
 static void app_finalize(GObject *object)
 {
     App *app = JUMPDF_APP(object);
 
-    app_update_database_mark_managers(app);
     g_hash_table_destroy(app->uri_mark_manager_map);
 
     g_ptr_array_free(app->windows, TRUE);
 
-    database_close(app->db);
-    free(app->db);
-
-    config_destroy(g_config);
-    free(g_config);
+    /* NULL in a process that only forwarded files */
+    if (g_config != NULL) {
+        config_destroy(g_config);
+        free(g_config);
+        g_config = NULL;
+    }
 
     G_OBJECT_CLASS(app_parent_class)->finalize(object);
 }
@@ -109,6 +129,8 @@ static void app_open(GApplication *app, GFile **files, int n_files,
 static void app_class_init(AppClass *class)
 {
     G_OBJECT_CLASS(class)->finalize = app_finalize;
+    G_APPLICATION_CLASS(class)->startup = app_startup;
+    G_APPLICATION_CLASS(class)->shutdown = app_shutdown;
     G_APPLICATION_CLASS(class)->activate = app_activate;
     G_APPLICATION_CLASS(class)->open = app_open;
 }
@@ -121,58 +143,25 @@ App *app_new(void)
 
 ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
 {
-    char *uri = NULL;
-    ViewerMarkGroup **groups = NULL;
-    ViewerCursor **default_cursors = NULL;
-    ViewerCursor *default_cursor = NULL;
+    char *uri = g_file_get_uri(file);
+    ViewerMarkManager *original = g_hash_table_lookup(app->uri_mark_manager_map, uri);
     ViewerMarkManager *mark_manager = NULL;
-    ViewerMarkManager *mark_manager_memory = NULL;
-    ViewerMarkManager *mark_manager_db = NULL;
 
-    uri = g_file_get_uri(file);
-    mark_manager_memory = g_hash_table_lookup(JUMPDF_APP(app)->uri_mark_manager_map, uri);
-    if (mark_manager_memory == NULL) {
-        app_update_database_mark_managers(JUMPDF_APP(app));
-        mark_manager_db = database_get_mark_manager(app->db, uri);
-
-        if (mark_manager_db == NULL) {
-            groups = malloc(NUM_GROUPS * sizeof(ViewerMarkGroup *));
-
-            for (unsigned int i = 0; i < NUM_GROUPS; i++) {
-                default_cursors = malloc(NUM_MARKS * sizeof(ViewerCursor *));
-                for (unsigned int j = 0; j < NUM_MARKS; j++) {
-                    default_cursors[j] = NULL;
-                }
-
-                groups[i] = viewer_mark_group_new(default_cursors, 0, 0);
-                free(default_cursors);
-            }
-
-            mark_manager = viewer_mark_manager_new(groups, 0, 0);
-            free(groups);
-
-            database_insert_mark_manager(app->db, uri, mark_manager);
-        } else {
-            mark_manager = mark_manager_db;
-        }
-
-        g_hash_table_insert(JUMPDF_APP(app)->uri_mark_manager_map,
-            uri, mark_manager);
-    } else {
-        // Copy to have the same groups and marks, but different selections
-        mark_manager = viewer_mark_manager_copy(mark_manager_memory);
+    if (original != NULL) {
         g_free(uri);
+
+        // Copy to have the same groups and marks, but different selections
+        mark_manager = viewer_mark_manager_copy(original);
+        viewer_mark_manager_ensure_current_mark(mark_manager);
+
+        return mark_manager;
     }
 
-    if (viewer_mark_manager_get_current_cursor(mark_manager) == NULL) {
-        default_cursor = viewer_cursor_new(0, 0.0, 0.0, 1.0, TRUE, FALSE, 0);
-        viewer_mark_manager_set_mark(mark_manager, viewer_cursor_copy(default_cursor),
-            viewer_mark_manager_get_current_group_index(mark_manager),
-            viewer_mark_manager_get_current_mark_index(mark_manager));
-
-        viewer_cursor_destroy(default_cursor);
-        free(default_cursor);
+    if (mark_store_load(app->mark_store, uri, &mark_manager) != MARK_STORE_FOUND) {
+        mark_manager = viewer_mark_manager_new_default();
     }
+
+    g_hash_table_insert(app->uri_mark_manager_map, uri, mark_manager);
 
     return mark_manager;
 }
@@ -204,10 +193,13 @@ void app_redraw_windows(App *app)
     g_ptr_array_foreach(app->windows, window_redraw_cb, NULL);
 }
 
-void app_update_database_mark_managers(App *app)
+void app_save_document(App *app, const char *uri)
 {
-    g_hash_table_foreach(app->uri_mark_manager_map,
-        (GHFunc)database_update_mark_manager_cb, app);
+    ViewerMarkManager *manager = g_hash_table_lookup(app->uri_mark_manager_map, uri);
+
+    if (manager != NULL) {
+        mark_store_save(app->mark_store, uri, manager);
+    }
 }
 
 void app_open_file_chooser(App *app)
@@ -243,13 +235,15 @@ static void window_redraw_cb(gpointer win_ptr, gpointer user_data)
     window_redraw(win);
 }
 
-static void database_update_mark_manager_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data)
+static void save_all_documents(App *app)
 {
-    const char *uri = uri_ptr;
-    ViewerMarkManager *manager = manager_ptr;
-    App *app = (App *)user_data;
+    GHashTableIter iter;
+    gpointer uri;
 
-    database_update_mark_manager(app->db, uri, manager);
+    g_hash_table_iter_init(&iter, app->uri_mark_manager_map);
+    while (g_hash_table_iter_next(&iter, &uri, NULL)) {
+        app_save_document(app, uri);
+    }
 }
 
 static gboolean mark_manager_equal_cb(gpointer uri_ptr, gpointer manager_ptr, gpointer user_data)

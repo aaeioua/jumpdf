@@ -6,7 +6,7 @@ sources = [
     'app.c',
     'window.c',
     'statusline.c',
-    'database.c',
+    'mark_store.c',
     'viewer.c',
     'renderer.c',
     'input_cmd.c',

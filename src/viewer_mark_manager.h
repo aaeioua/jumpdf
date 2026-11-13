@@ -11,6 +11,7 @@ typedef struct ViewerMarkManager {
 } ViewerMarkManager;
 
 ViewerMarkManager *viewer_mark_manager_new(ViewerMarkGroup *groups[NUM_GROUPS], unsigned int current_group, unsigned int previous_group);
+ViewerMarkManager *viewer_mark_manager_new_default(void);
 ViewerMarkManager *viewer_mark_manager_copy(ViewerMarkManager *manager);
 void viewer_mark_manager_init(ViewerMarkManager *manager, ViewerMarkGroup *groups[NUM_GROUPS], unsigned int current_group, unsigned int previous_group);
 void viewer_mark_manager_destroy(ViewerMarkManager *manager);
@@ -25,6 +26,8 @@ void viewer_mark_manager_set_current_mark(ViewerMarkManager *manager, unsigned i
 unsigned int viewer_mark_manager_get_current_mark_index(ViewerMarkManager *manager);
 ViewerCursor *viewer_mark_manager_get_current_cursor(ViewerMarkManager *manager);
 void viewer_mark_manager_set_current_cursor(ViewerMarkManager *manager, ViewerCursor *cursor);
+/* The current Mark is never empty: sets it to the top of the first page if it is. */
+void viewer_mark_manager_ensure_current_mark(ViewerMarkManager *manager);
 
 void viewer_mark_manager_switch_group(ViewerMarkManager *manager, unsigned int group_i);
 void viewer_mark_manager_switch_to_previous_group(ViewerMarkManager *manager);

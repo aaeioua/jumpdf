@@ -14,6 +14,21 @@ ViewerMarkManager *viewer_mark_manager_new(ViewerMarkGroup *groups[NUM_GROUPS], 
     return manager;
 }
 
+ViewerMarkManager *viewer_mark_manager_new_default(void)
+{
+    ViewerCursor *empty_marks[NUM_MARKS] = {0};
+    ViewerMarkGroup *groups[NUM_GROUPS];
+
+    for (unsigned int i = 0; i < NUM_GROUPS; i++) {
+        groups[i] = viewer_mark_group_new(empty_marks, 0, 0);
+    }
+
+    ViewerMarkManager *manager = viewer_mark_manager_new(groups, 0, 0);
+    viewer_mark_manager_ensure_current_mark(manager);
+
+    return manager;
+}
+
 ViewerMarkManager *viewer_mark_manager_copy(ViewerMarkManager *manager)
 {
     return viewer_mark_manager_new(manager->groups, manager->current_group, manager->previous_group);
@@ -90,6 +105,14 @@ void viewer_mark_manager_set_current_cursor(ViewerMarkManager *manager, ViewerCu
 {
     ViewerMarkGroup *group = manager->groups[manager->current_group];
     group->marks[group->current_mark] = cursor;
+}
+
+void viewer_mark_manager_ensure_current_mark(ViewerMarkManager *manager)
+{
+    if (viewer_mark_manager_get_current_cursor(manager) == NULL) {
+        viewer_mark_manager_set_current_cursor(manager,
+            viewer_cursor_new(0, 0.0, 0.0, 1.0, true, false, 0));
+    }
 }
 
 void viewer_mark_manager_switch_group(ViewerMarkManager *manager, unsigned int group_i)
