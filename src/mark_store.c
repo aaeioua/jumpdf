@@ -540,8 +540,7 @@ static gboolean load_marks(MarkStore *store, const char *uri,
             finite_or(sqlite3_column_double(stmt, 4), 0.0),
             isfinite(scale) && scale > 0.0 ? scale : 1.0,
             sqlite3_column_int(stmt, 6) != 0,
-            sqlite3_column_int(stmt, 7) != 0,
-            0);
+            sqlite3_column_int(stmt, 7) != 0);
     }
 
     return finish(store, stmt, rc, error);

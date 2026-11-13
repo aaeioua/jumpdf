@@ -4,8 +4,8 @@ steps = 15
 min_scale = 0.3
 scale_step = 0.1
 
-# Possible components: ["Page", "Center mode", "Scale", "Mark selection"]
+# Possible components: ["Page", "Center mode", "Scale", "Mark selection", "Pending keys"]
 statusline_separator = " | "
-statusline_left = ["Page"]
+statusline_left = ["Page", "Pending keys"]
 statusline_middle = []
 statusline_right = ["Center mode", "Scale", "Mark selection"]

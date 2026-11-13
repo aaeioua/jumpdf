@@ -22,8 +22,6 @@ Viewer *viewer_new(ViewerInfo *info, GroupSelection *selection, ViewerSearch *se
     viewer->search = search;
     viewer->links = links;
     viewer->viewport = viewport;
-    viewer->last_command = (Command){0};
-    viewer->last_jump_command = (Command){0};
 
     return viewer;
 }

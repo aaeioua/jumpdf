@@ -82,7 +82,7 @@ void viewer_mark_manager_ensure_current_mark(ViewerMarkManager *manager)
 
     if (group->marks[group->current_mark] == NULL) {
         group->marks[group->current_mark] =
-            viewer_cursor_new(0, 0.0, 0.0, 1.0, true, false, 0);
+            viewer_cursor_new(0, 0.0, 0.0, 1.0, true, false);
     }
 }
 

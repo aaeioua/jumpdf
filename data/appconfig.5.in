@@ -70,7 +70,7 @@ Description: Specifies the components to be displayed on the left side of the st
 Value type: Array<String>
 .RE
 .RS
-Default value: ["Page"]
+Default value: ["Page", "Pending keys"]
 .RE
 
 .TP
@@ -94,7 +94,7 @@ Default value: ["Center mode", "Scale", "Mark selection"]
 .RE
 
 .PP
-Possible components for statusline_left, statusline_middle, and statusline_right: ["Page", "Center mode", "Scale", "Mark selection"]
+Possible components for statusline_left, statusline_middle, and statusline_right: ["Page", "Center mode", "Scale", "Mark selection", "Pending keys"]
 
 .SH SEE ALSO
 .BR jumpdf (1)

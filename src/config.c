@@ -280,6 +280,7 @@ static void config_load_default_statusline_middle(Config *config)
 static void config_load_default_statusline_right(Config *config)
 {
     StatuslineComponent components[] = {
+        STATUSLINE_COMPONENT_PENDING_KEYS,
         STATUSLINE_COMPONENT_CENTER_MODE,
         STATUSLINE_COMPONENT_SCALE,
         STATUSLINE_COMPONENT_MARK_SELECTION,

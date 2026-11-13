@@ -36,13 +36,13 @@ Open multiple PDF files.
 Repeats <command> <number> times.
 .RS
 .TP
-.B j, k
+.B j or Down, k or Up
 Move down, up.
 .TP
-.B h, l
+.B h or Left, l or Right
 Move left, right (must not be in center mode).
 .TP
-.B d, u
+.B d or PgDn, u or PgUp
 Move down, up half a page.
 .TP
 .B +, -
@@ -67,7 +67,7 @@ Fit horizontally to page.
 .B a
 Fit vertically to page.
 .TP
-.B gg, G, <number>G
+.B gg or Home, G or End, <number>G
 Go to first, last page, page <number>.
 .TP
 .B f

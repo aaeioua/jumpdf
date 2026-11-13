@@ -13,6 +13,8 @@ StatuslineComponent statusline_component_from_str(gchar *str)
         return STATUSLINE_COMPONENT_SCALE;
     } else if (g_strcmp0(str, "Mark selection") == 0) {
         return STATUSLINE_COMPONENT_MARK_SELECTION;
+    } else if (g_strcmp0(str, "Pending keys") == 0) {
+        return STATUSLINE_COMPONENT_PENDING_KEYS;
     } else {
         return 0;
     }
@@ -50,6 +52,7 @@ static gchar *statusline_component_to_str(StatuslineComponent component, Window 
     Viewer *viewer = window_get_viewer(win);
     GroupSelection *selection = window_get_group_selection(win);
     ViewerCursor *mark = group_selection_current_mark(selection);
+    const char *pending_keys;
 
     switch (component) {
     case STATUSLINE_COMPONENT_PAGE:
@@ -65,6 +68,9 @@ static gchar *statusline_component_to_str(StatuslineComponent component, Window 
         return g_strdup_printf("%u:%u",
             group_selection_current_group(selection) + 1,
             group_selection_current_mark_index(selection) + 1);
+    case STATUSLINE_COMPONENT_PENDING_KEYS:
+        pending_keys = input_pending(window_get_input(win));
+        return pending_keys[0] == '\0' ? NULL : g_strdup(pending_keys);
     default:
         return NULL;
     }

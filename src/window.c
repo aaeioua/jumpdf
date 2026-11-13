@@ -12,7 +12,7 @@
 #include "config.h"
 #include "viewer.h"
 #include "viewer_mark_manager.h"
-#include "input_FSM.h"
+#include "input.h"
 #include "renderer.h"
 
 // TODO: Load from file or resource
@@ -21,48 +21,16 @@ static const char *css =
     "    background-color: black;"
     "}";
 
-typedef struct {
-    const char *key;
-    const char *description;
-    const int indent_level;
-} Keybinding;
-
-static const Keybinding keybindings[] = {
-    {"<number><command>", "Repeats <command> <number> times", 0},
-    {"j, k", "Move down, up", 1},
-    {"h, l", "Move left, right. Must not be in center mode", 1},
-    {"d, u", "Move down, up half a page", 1},
-    {"+, -", "Zoom in, out", 1},
-    {"n, N", "Goto next, previous page containing the search string", 1},
-    {"0", "Reset zoom", 0},
-    {"c", "Toggle center mode", 0},
-    {"b", "Toggle dark mode", 0},
-    {"s", "Fit horizontally to page", 0},
-    {"a", "Fit vertically to page", 0},
-    {"gg, G, <number>G", "Goto first, last page, page <number>", 0},
-    {"f + <number> + Enter", "Show link numbers and execute link", 0},
-    {"m<1-9>", "Set current mark to <1-9>. If the mark hasn't been set, it will be set to the current cursor", 0},
-    {"mn", "Switch to previous mark", 0},
-    {"mc<1-9>", "Clear mark <1-9>", 0},
-    {"ms<1-9>", "Swap current mark with mark <1-9> and switch to it", 0},
-    {"mo<1-9>", "Overwrite mark <1-9> with the current cursor and switch to it", 0},
-    {"g<1-9>", "Set current group to <1-9>. If the current mark of the group hasn't been set, it will be set to the current cursor", 0},
-    {"gn", "Switch to previous group", 0},
-    {"gs<1-9>", "Swap current group with group <1-9> and switch to it", 0},
-    {"go<1-9>", "Overwrite group <1-9> with the current group and switch to it", 0},
-    {".", "Repeat last command (zoom, scroll, search or switch to previous mark or group)", 0},
-    {",", "Repeat last jump command (switch to previous mark or group)", 0},
-    {"/, Esc", "Show/hide search dialog", 0},
-    {"o", "Open file chooser", 0},
-    {"Tab", "Toggle table of contents", 0},
-    {"j, k", "Move down, up in table of contents", 1},
-    {"/, Esc", "Focus/unfocus search entry in table of contents", 1},
-    {"Enter", "Goto selected page in table of contents", 1},
-    {"F11", "Toggle fullscreen", 0},
-    {"?", "Show help dialog", 0}
-};
-
 static void window_redraw_document_windows(Window *win);
+static void window_handle_request(Window *win, InputRequest request);
+static void window_toggle_fullscreen(Window *win);
+static void window_show_search_dialog(Window *win);
+static void window_show_help_dialog(Window *win);
+static void window_toggle_toc(Window *win);
+static void window_focus_toc_search(Window *win);
+static void window_execute_toc_row(Window *win, GtkListBoxRow *row);
+static void window_step_toc_selection(Window *win, int step);
+static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step);
 static void window_update_statusline(Window *win);
 static void window_populate_toc(Window *win);
 static void window_add_toc_entries(Window *win, PopplerIndexIter *iter, int level);
@@ -124,7 +92,7 @@ struct _Window {
     Viewer *viewer;
     Renderer *renderer;
     bool first_draw;
-    InputState current_input_state;
+    Input *input;
 };
 
 G_DEFINE_TYPE(Window, window, GTK_TYPE_APPLICATION_WINDOW)
@@ -139,7 +107,7 @@ static void window_init(Window *win)
     win->viewer = NULL;
     win->renderer = NULL;
     win->first_draw = TRUE;
-    win->current_input_state = STATE_NORMAL;
+    win->input = input_new();
 
     win->event_controller = gtk_event_controller_key_new();
     g_signal_connect_object(win->event_controller, "key-pressed",
@@ -249,6 +217,8 @@ static void window_finalize(GObject *object)
     renderer_destroy(win->renderer);
     win->renderer = NULL;
 
+    g_clear_pointer(&win->input, input_free);
+
     viewer_destroy(win->viewer);
     win->viewer = NULL;
 
@@ -321,7 +291,7 @@ void window_redraw(Window *win)
     renderer_render_visible_pages(win->renderer, win->viewer);
 }
 
-void window_toggle_fullscreen(Window *win)
+static void window_toggle_fullscreen(Window *win)
 {
     if (gtk_window_is_fullscreen(GTK_WINDOW(win))) {
         gtk_window_unfullscreen(GTK_WINDOW(win));
@@ -330,7 +300,7 @@ void window_toggle_fullscreen(Window *win)
     }
 }
 
-void window_show_help_dialog(Window *win)
+static void window_show_help_dialog(Window *win)
 {
     GtkWidget *dialog;
     GtkWidget *box;
@@ -340,6 +310,7 @@ void window_show_help_dialog(Window *win)
     GtkWidget *keybindings_grid;
     GtkWidget *key_label;
     GtkWidget *description_label;
+    GArray *help_rows;
     const int margin = 10;
     GdkSurface *win_surface;
     int win_width, win_height;
@@ -384,31 +355,32 @@ void window_show_help_dialog(Window *win)
     gtk_widget_set_margin_end(keybindings_grid, margin);
     gtk_box_append(GTK_BOX(text_box), keybindings_grid);
 
-    for (size_t i = 0; i < G_N_ELEMENTS(keybindings); i++) {
-        int indent_margin;
+    help_rows = input_help();
+    for (guint i = 0; i < help_rows->len; i++) {
+        const InputHelpRow *row = &g_array_index(help_rows, InputHelpRow, i);
 
-        key_label = gtk_label_new(keybindings[i].key);
-        description_label = gtk_label_new(keybindings[i].description);
+        key_label = gtk_label_new(row->keys);
+        description_label = gtk_label_new(row->description);
 
         gtk_label_set_xalign(GTK_LABEL(key_label), 0.0);
         gtk_label_set_xalign(GTK_LABEL(description_label), 0.0);
 
-        indent_margin = keybindings[i].indent_level * margin;
-        gtk_widget_set_margin_start(key_label, indent_margin);
+        gtk_widget_set_margin_start(key_label, row->indent * margin);
 
         gtk_grid_attach(GTK_GRID(keybindings_grid), key_label, 0, i, 1, 1);
         gtk_grid_attach(GTK_GRID(keybindings_grid), description_label, 1, i, 1, 1);
     }
+    input_help_free(help_rows);
 
     gtk_window_present(GTK_WINDOW(dialog));
 }
 
-void window_show_search_dialog(Window *win)
+static void window_show_search_dialog(Window *win)
 {
     gtk_window_present(GTK_WINDOW(win->search_window));
 }
 
-void window_toggle_toc(Window *win)
+static void window_toggle_toc(Window *win)
 {
     gboolean is_visible = gtk_widget_get_visible(win->toc_scroll_window);
 
@@ -425,12 +397,12 @@ void window_toggle_toc(Window *win)
     }
 }
 
-void window_focus_toc_search(Window *win)
+static void window_focus_toc_search(Window *win)
 {
     gtk_widget_grab_focus(win->toc_search_entry);
 }
 
-void window_execute_toc_row(Window *win, GtkListBoxRow *row)
+static void window_execute_toc_row(Window *win, GtkListBoxRow *row)
 {
     GtkWidget *toc_entry_box;
     PopplerDest *dest;
@@ -463,14 +435,86 @@ Viewer *window_get_viewer(Window *win)
     return win->viewer;
 }
 
-GtkListBox *window_get_toc_listbox(Window *win)
+Input *window_get_input(Window *win)
 {
-    return GTK_LIST_BOX(win->toc_container);
+    return win->input;
 }
 
 static void window_redraw_document_windows(Window *win)
 {
     app_redraw_windows(win->app, win->mark_manager);
+}
+
+static void window_handle_request(Window *win, InputRequest request)
+{
+    GtkListBox *toc_list_box = GTK_LIST_BOX(win->toc_container);
+
+    switch (request) {
+    case INPUT_REQUEST_NONE:
+        break;
+    case INPUT_REQUEST_TOGGLE_OUTLINE:
+        window_toggle_toc(win);
+        break;
+    case INPUT_REQUEST_OUTLINE_NEXT:
+        window_step_toc_selection(win, 1);
+        break;
+    case INPUT_REQUEST_OUTLINE_PREVIOUS:
+        window_step_toc_selection(win, -1);
+        break;
+    case INPUT_REQUEST_OUTLINE_ACTIVATE:
+        window_execute_toc_row(win,
+            gtk_list_box_get_selected_row(toc_list_box));
+        break;
+    case INPUT_REQUEST_OUTLINE_FOCUS_FILTER:
+        window_focus_toc_search(win);
+        break;
+    case INPUT_REQUEST_SHOW_SEARCH:
+        window_show_search_dialog(win);
+        break;
+    case INPUT_REQUEST_SHOW_HELP:
+        window_show_help_dialog(win);
+        break;
+    case INPUT_REQUEST_OPEN_FILE:
+        app_open_file_chooser(win->app);
+        break;
+    case INPUT_REQUEST_TOGGLE_FULLSCREEN:
+        window_toggle_fullscreen(win);
+        break;
+    }
+}
+
+/* Selects the next (step 1) or previous (step -1) visible outline row */
+static void window_step_toc_selection(Window *win, int step)
+{
+    GtkListBox *toc_list_box = GTK_LIST_BOX(win->toc_container);
+    GtkListBoxRow *current_row = gtk_list_box_get_selected_row(toc_list_box);
+    GtkListBoxRow *new_row;
+
+    if (current_row == NULL) {
+        return;
+    }
+
+    new_row = window_visible_toc_row(win,
+        gtk_list_box_row_get_index(current_row) + step, step);
+    if (new_row != NULL) {
+        gtk_list_box_select_row(toc_list_box, new_row);
+    }
+}
+
+/* The first visible outline row at index, index + step, index + 2 * step... */
+static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step)
+{
+    GtkListBox *toc_list_box = GTK_LIST_BOX(win->toc_container);
+    GtkListBoxRow *row;
+
+    for (; index >= 0; index += step) {
+        row = gtk_list_box_get_row_at_index(toc_list_box, index);
+        if (row == NULL || gtk_widget_get_visible(GTK_WIDGET(row))) {
+            return row;
+        }
+    }
+
+    return NULL;
 }
 
 static void window_update_statusline(Window *win)
@@ -498,9 +542,8 @@ static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,
 
     Window *win = (Window *)user_data;
 
-    win->current_input_state = execute_state(win->current_input_state, win, keyval);
-    viewer_cursor_handle_offset_update(viewer_current_mark(win->viewer),
-        win->viewer->info->n_pages);
+    InputRequest request = input_feed(win->input, win->viewer, keyval);
+    window_handle_request(win, request);
     window_redraw_document_windows(win);
 
     return TRUE;
@@ -512,25 +555,15 @@ static void on_scroll(GtkEventControllerScroll *controller, double dx,
     Window *win;
     GdkEvent *event;
     GdkModifierType state;
-    ViewerCursor *mark;
 
     win = (Window *)user_data;
-    mark = viewer_current_mark(win->viewer);
 
     event =
         gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller));
     if (event) {
         state = gdk_event_get_modifier_state(event);
-        switch (state) {
-        case GDK_CONTROL_MASK:
-            viewer_cursor_set_scale(mark, mark->scale - dy * g_config->scale_step);
-            break;
-        default:
-            mark->x_offset -= dx;
-            mark->y_offset += dy;
-
-            viewer_cursor_handle_offset_update(mark, win->viewer->info->n_pages);
-        }
+        input_scroll(win->input, win->viewer, dx, dy,
+            state == GDK_CONTROL_MASK);
     }
 
     window_redraw_document_windows(win);
@@ -704,10 +737,7 @@ static void on_toc_search_changed(GtkSearchEntry *entry, gpointer user_data)
         child = gtk_widget_get_next_sibling(child);
     }
 
-    first_visible_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(win->toc_container), 0);
-    while (first_visible_row != NULL && !gtk_widget_get_visible(GTK_WIDGET(first_visible_row))) {
-        first_visible_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(win->toc_container), gtk_list_box_row_get_index(first_visible_row) + 1);
-    }
+    first_visible_row = window_visible_toc_row(win, 0, 1);
     if (first_visible_row != NULL) {
         gtk_list_box_select_row(GTK_LIST_BOX(win->toc_container), first_visible_row);
     }

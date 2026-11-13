@@ -6,7 +6,6 @@
 #include "viewer_search.h"
 #include "viewer_links.h"
 #include "viewport.h"
-#include "input_cmd.h"
 
 typedef struct Viewer {
     ViewerInfo *info;
@@ -14,8 +13,6 @@ typedef struct Viewer {
     ViewerSearch *search;
     ViewerLinks *links;
     Viewport *viewport;
-    Command last_command;
-    Command last_jump_command;
 } Viewer;
 
 Viewer *viewer_new(ViewerInfo *info, GroupSelection *selection, ViewerSearch *search, ViewerLinks *links);

@@ -11,15 +11,14 @@ ViewerCursor *viewer_cursor_new(int current_page,
                                 double y_offset,
                                 double scale,
                                 bool center_mode,
-                                bool dark_mode,
-                                unsigned int input_number)
+                                bool dark_mode)
 {
     ViewerCursor *cursor = malloc(sizeof(ViewerCursor));
     if (cursor == NULL) {
         return NULL;
     }
 
-    viewer_cursor_init(cursor, current_page, x_offset, y_offset, scale, center_mode, dark_mode, input_number);
+    viewer_cursor_init(cursor, current_page, x_offset, y_offset, scale, center_mode, dark_mode);
 
     return cursor;
 }
@@ -31,8 +30,7 @@ ViewerCursor *viewer_cursor_copy(ViewerCursor *cursor)
                              cursor->y_offset,
                              cursor->scale,
                              cursor->center_mode,
-                             cursor->dark_mode,
-                             cursor->input_number);
+                             cursor->dark_mode);
 }
 
 void viewer_cursor_init(ViewerCursor *cursor,
@@ -41,8 +39,7 @@ void viewer_cursor_init(ViewerCursor *cursor,
                         double y_offset,
                         double scale,
                         bool center_mode,
-                        bool dark_mode,
-                        unsigned int input_number)
+                        bool dark_mode)
 {
     cursor->current_page = current_page;
     cursor->x_offset = x_offset;
@@ -50,7 +47,6 @@ void viewer_cursor_init(ViewerCursor *cursor,
     cursor->scale = scale;
     cursor->center_mode = center_mode;
     cursor->dark_mode = dark_mode;
-    cursor->input_number = input_number;
 }
 
 void viewer_cursor_destroy(ViewerCursor *cursor)
