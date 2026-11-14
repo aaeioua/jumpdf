@@ -76,7 +76,7 @@ static void renderer_push_job(Renderer *renderer, RenderJob *job);
 static void render_page_async(gpointer data, gpointer user_data);
 static void renderer_render_page(cairo_t *cr, ViewerInfo *info,
     PopplerPage *page, const RenderInput *input);
-static cairo_surface_t *create_loading_surface(int width, int height);
+static void draw_loading_page(cairo_t *cr, const ViewportRect *rect);
 static void viewer_draw_links(cairo_t *cr, const RenderInput *input);
 
 static RenderInput *render_input_new(Viewer *viewer,
@@ -243,24 +243,19 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
     const gboolean scanned = search_page_matches(viewer->search, page_idx,
         &matches, &n_matches);
 
-    cairo_surface_t *surface = NULL;
-    gboolean is_cached = FALSE;
     RendererPageState *page_state = &renderer->page_states[page_idx];
     g_mutex_lock(&page_state->mutex);
-    if (page_state->status == RENDERER_PAGE_RENDERED &&
-        page_state->surface != NULL) {
-        surface = page_state->surface;
-        is_cached = TRUE;
-    } else {
-        g_mutex_unlock(&page_state->mutex);
-        surface = create_loading_surface(MAX(1, (int)rect.width),
-            MAX(1, (int)rect.height));
+    const gboolean is_cached = page_state->status == RENDERER_PAGE_RENDERED &&
+        page_state->surface != NULL;
+    if (is_cached) {
+        cairo_set_source_surface(cr, page_state->surface, rect.x, rect.y);
+        cairo_paint(cr);
     }
+    g_mutex_unlock(&page_state->mutex);
 
-    cairo_set_source_surface(cr, surface, rect.x, rect.y);
-    cairo_paint(cr);
-
-    if (is_cached && scanned) {
+    if (!is_cached) {
+        draw_loading_page(cr, &rect);
+    } else if (scanned) {
         renderer_draw_highlights(cr, &rect, layout->scale,
             viewport_get_page_size(viewer->viewport, page_idx).height,
             matches, n_matches);
@@ -275,12 +270,6 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
         cairo_rel_line_to(cr, rect.width, 0);
         cairo_stroke(cr);
         cairo_restore(cr);
-    }
-
-    if (is_cached) {
-        g_mutex_unlock(&page_state->mutex);
-    } else {
-        cairo_surface_destroy(surface);
     }
 }
 
@@ -610,14 +599,14 @@ static void weak_ref_free(gpointer data)
     g_free(target_ref);
 }
 
-static cairo_surface_t *create_loading_surface(int width, int height)
+static void draw_loading_page(cairo_t *cr, const ViewportRect *rect)
 {
-    cairo_surface_t *loading_surface = cairo_image_surface_create(
-        CAIRO_FORMAT_ARGB32, MAX(1, width), MAX(1, height));
-    cairo_t *cr = cairo_create(loading_surface);
-
+    cairo_save(cr);
+    cairo_rectangle(cr, rect->x, rect->y, rect->width, rect->height);
+    cairo_clip(cr);
     cairo_set_source_rgb(cr, 1, 1, 1);
     cairo_paint(cr);
+
     cairo_set_source_rgb(cr, 0, 0, 0);
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
         CAIRO_FONT_WEIGHT_NORMAL);
@@ -625,15 +614,11 @@ static cairo_surface_t *create_loading_surface(int width, int height)
 
     cairo_text_extents_t extents;
     cairo_text_extents(cr, "Loading...", &extents);
-    double x = (width - extents.width) / 2 - extents.x_bearing;
-    double y = (height - extents.height) / 2 - extents.y_bearing;
-
-    cairo_move_to(cr, x, y);
+    cairo_move_to(cr,
+        rect->x + (rect->width - extents.width) / 2 - extents.x_bearing,
+        rect->y + (rect->height - extents.height) / 2 - extents.y_bearing);
     cairo_show_text(cr, "Loading...");
-
-    cairo_destroy(cr);
-
-    return loading_surface;
+    cairo_restore(cr);
 }
 
 static void viewer_draw_links(cairo_t *cr, const RenderInput *input)
