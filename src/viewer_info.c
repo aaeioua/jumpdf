@@ -54,21 +54,15 @@ bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc)
         return false;
     }
 
-    info->pages = calloc(n_pages, sizeof(Page *));
+    info->pages = calloc(n_pages, sizeof(PopplerPage *));
     if (info->pages == NULL) {
         return false;
     }
 
     for (int i = 0; i < n_pages; i++) {
-        PopplerPage *poppler_page = poppler_document_get_page(doc, i);
-        if (poppler_page == NULL) {
-            g_printerr("Could not open %i'th page of document\n", i);
-            return false;
-        }
-
-        Page *page = page_new(poppler_page);
+        PopplerPage *page = poppler_document_get_page(doc, i);
         if (page == NULL) {
-            g_object_unref(poppler_page);
+            g_printerr("Could not open %i'th page of document\n", i);
             return false;
         }
 
@@ -88,8 +82,7 @@ void viewer_info_destroy(ViewerInfo *info)
 
     if (info->pages) {
         for (int i = 0; i < info->n_pages; i++) {
-            page_destroy(info->pages[i]);
-            free(info->pages[i]);
+            g_object_unref(info->pages[i]);
             info->pages[i] = NULL;
         }
 
@@ -131,5 +124,5 @@ PopplerPage *viewer_info_get_poppler_page(ViewerInfo *info, int page_num)
         return NULL;
     }
 
-    return info->pages[page_num]->poppler_page;
+    return info->pages[page_num];
 }

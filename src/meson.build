@@ -12,7 +12,6 @@ sources = [
     'viewer.c',
     'renderer.c',
     'input.c',
-    'page.c',
     'viewer_info.c',
     'viewer_cursor.c',
     'viewport.c',

@@ -1,13 +1,11 @@
 #pragma once
 
-#include "page.h"
-
 #include <poppler.h>
 #include <stdbool.h>
 
 typedef struct ViewerInfo {
     PopplerDocument *doc;
-    Page **pages;
+    PopplerPage **pages;
     int n_pages;
     GMutex poppler_lock;
 } ViewerInfo;
