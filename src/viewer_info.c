@@ -46,6 +46,7 @@ bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc)
     info->doc = doc;
     info->n_pages = 0;
     info->pages = NULL;
+    g_mutex_init(&info->poppler_lock);
 
     const int n_pages = poppler_document_get_n_pages(doc);
     if (n_pages <= 0) {
@@ -95,6 +96,18 @@ void viewer_info_destroy(ViewerInfo *info)
         free(info->pages);
         info->pages = NULL;
     }
+
+    g_mutex_clear(&info->poppler_lock);
+}
+
+void viewer_info_lock(ViewerInfo *info)
+{
+    g_mutex_lock(&info->poppler_lock);
+}
+
+void viewer_info_unlock(ViewerInfo *info)
+{
+    g_mutex_unlock(&info->poppler_lock);
 }
 
 PopplerDest *viewer_info_get_dest(ViewerInfo *info, PopplerDest *dest)
@@ -102,7 +115,9 @@ PopplerDest *viewer_info_get_dest(ViewerInfo *info, PopplerDest *dest)
     PopplerDest *actual_dest = NULL;
 
     if (dest->type == POPPLER_DEST_NAMED) {
+        viewer_info_lock(info);
         actual_dest = poppler_document_find_dest(info->doc, dest->named_dest);
+        viewer_info_unlock(info);
     } else {
         actual_dest = dest;
     }

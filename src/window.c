@@ -27,6 +27,8 @@ static void window_execute_toc_row(Window *win, GtkListBoxRow *row);
 static void window_step_toc_selection(Window *win, int step);
 static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step);
 static void window_update_statusline(Window *win);
+static void window_on_search_changed(gpointer user_data);
+static void window_on_search_found(int from, int to, gpointer user_data);
 static void window_populate_toc(Window *win);
 static void window_add_toc_entries(Window *win, PopplerIndexIter *iter, int level);
 
@@ -212,12 +214,16 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     ViewerInfo *info)
 {
     GError *error = NULL;
-    ViewerSearch *search;
+    const SearchCallbacks search_callbacks = {
+        .changed = window_on_search_changed,
+        .found = window_on_search_found,
+    };
+    Search *search;
     ViewerLinks *links;
     GFileInfo *file_info;
     double default_width, default_height;
 
-    search = viewer_search_new();
+    search = search_new(info, &search_callbacks, win);
     links = viewer_links_new();
 
     win->uri = g_file_get_uri(file);
@@ -472,10 +478,28 @@ static void window_update_statusline(Window *win)
         .group = group_selection_current_group(win->selection),
         .mark = group_selection_current_mark_index(win->selection),
         .pending_keys = input_pending(win->input),
-        .search_text = win->viewer->search->search_text,
+        .search_text = search_query(win->viewer->search),
+        .search_pending = search_seeking(win->viewer->search),
     };
 
     statusline_update(win->statusline, &state);
+}
+
+static void window_on_search_changed(gpointer user_data)
+{
+    Window *win = user_data;
+
+    gtk_widget_queue_draw(win->view);
+    window_update_statusline(win);
+}
+
+static void window_on_search_found(int from, int to, gpointer user_data)
+{
+    Window *win = user_data;
+
+    if (viewer_goto_found_page(win->viewer, from, to)) {
+        window_redraw_document_windows(win);
+    }
 }
 
 static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,
@@ -625,7 +649,8 @@ static void on_search_entry_activate(GtkEntry *entry, gpointer user_data) {
     Window *win = (Window *)user_data;
     const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
 
-    viewer_search_set_text(win->viewer->search, text);
+    search_set_query(win->viewer->search, text,
+        viewer_current_mark(win->viewer)->current_page);
 
     gtk_window_close(GTK_WINDOW(win->search_window));
     window_redraw(win);

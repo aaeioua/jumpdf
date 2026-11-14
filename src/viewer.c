@@ -4,7 +4,8 @@
 
 static Viewport *viewport_new_for_document(ViewerInfo *info);
 
-Viewer *viewer_new(ViewerInfo *info, GroupSelection *selection, ViewerSearch *search, ViewerLinks *links)
+Viewer *viewer_new(ViewerInfo *info, GroupSelection *selection, Search *search,
+    ViewerLinks *links)
 {
     Viewport *viewport = viewport_new_for_document(info);
     if (viewport == NULL) {
@@ -34,8 +35,7 @@ void viewer_destroy(Viewer *viewer)
 
     viewport_destroy(viewer->viewport);
 
-    viewer_search_destroy(viewer->search);
-    free(viewer->search);
+    search_free(viewer->search);
 
     viewer_links_destroy(viewer->links);
     free(viewer->links);
@@ -49,6 +49,18 @@ void viewer_destroy(Viewer *viewer)
 ViewerCursor *viewer_current_mark(const Viewer *viewer)
 {
     return group_selection_current_mark(viewer->selection);
+}
+
+gboolean viewer_goto_found_page(Viewer *viewer, int from, int to)
+{
+    ViewerCursor *mark = viewer_current_mark(viewer);
+
+    if (mark->current_page != from) {
+        return FALSE;
+    }
+
+    viewport_goto_page(viewer->viewport, mark, to);
+    return TRUE;
 }
 
 void viewer_goto_dest(Viewer *viewer, PopplerDest *dest)

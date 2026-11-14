@@ -134,7 +134,7 @@ static const Binding bindings[] = {
     {COMMAND_OVERWRITE_GROUP, {"go<1-9>"}, "Overwrite group <1-9> with the current group and switch to it", 0, NORMAL, 0},
     {COMMAND_REPEAT, {"."}, "Repeat the last command (zoom, scroll, search, mn or gn)", 0, NORMAL, 0},
     {COMMAND_REPEAT_JUMP, {","}, "Repeat the last jump command (mn or gn)", 0, NORMAL, 0},
-    {COMMAND_SHOW_SEARCH, {"/"}, "Show search dialog (Esc hides it)", 0, NORMAL, 0},
+    {COMMAND_SHOW_SEARCH, {"/"}, "Show search dialog (Enter searches, Esc hides it)", 0, NORMAL, 0},
     {COMMAND_OPEN_FILE, {"o"}, "Open file chooser", 0, NORMAL, 0},
     {COMMAND_TOGGLE_OUTLINE, {"Tab"}, "Toggle table of contents", 0, NORMAL | OUTLINE, 0},
     {COMMAND_OUTLINE_NEXT, {"j"}, "Move down in table of contents", 1, OUTLINE, 0},
@@ -220,7 +220,6 @@ static Token next_token(const char **cursor);
 static InputRequest run_binding(Input *input, Viewer *viewer,
     const Binding *binding, Command command);
 static InputRequest execute(Input *input, Viewer *viewer, Command command);
-static void search(Viewer *viewer, unsigned int count, gboolean forward);
 static void follow_link(Viewer *viewer, unsigned int number);
 static void clear_pending(Input *input);
 static void update_pending_text(Input *input);
@@ -529,10 +528,10 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
             mark->scale - command.count * g_config->scale_step);
         break;
     case COMMAND_SEARCH_NEXT:
-        search(viewer, command.count, TRUE);
+        search_seek(viewer->search, mark->current_page, (int)command.count);
         break;
     case COMMAND_SEARCH_PREVIOUS:
-        search(viewer, command.count, FALSE);
+        search_seek(viewer->search, mark->current_page, -(int)command.count);
         break;
     case COMMAND_RESET_ZOOM:
         viewer_cursor_set_scale(mark, 1.0);
@@ -619,27 +618,6 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
     }
 
     return INPUT_REQUEST_NONE;
-}
-
-/* Moves `count` matching pages on, stopping at the last match */
-static void search(Viewer *viewer, unsigned int count, gboolean forward)
-{
-    ViewerCursor *mark = viewer_current_mark(viewer);
-
-    for (unsigned int i = 0; i < count; i++) {
-        ViewerCursor *found = forward
-            ? viewer_search_get_next_search(viewer->search, viewer->info,
-                viewer->viewport, mark)
-            : viewer_search_get_prev_search(viewer->search, viewer->info,
-                viewer->viewport, mark);
-        if (found == NULL) {
-            break;
-        }
-
-        *mark = *found;
-        viewer_cursor_destroy(found);
-        free(found);
-    }
 }
 
 /* Links are numbered from 1; a number out of range does nothing */

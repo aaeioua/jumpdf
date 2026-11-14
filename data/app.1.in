@@ -49,7 +49,7 @@ Move down, up half a page.
 Zoom in, out.
 .TP
 .B n, N
-Go to next, previous page containing the search string.
+Go to the next, previous page containing the search text.
 .RE
 .TP
 .B 0
@@ -107,7 +107,7 @@ Repeat last command (zoom, scroll, search or switch to previous mark or group)
 Repeat last jump command (switch to previous mark or group)
 .TP
 .B /
-Show/hide search dialog.
+Show/hide search dialog. Enter goes to the first page from the current one that contains the text.
 .TP
 .B o
 Open file chooser.

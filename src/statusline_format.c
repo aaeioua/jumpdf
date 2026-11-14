@@ -4,6 +4,8 @@
 
 #define SEARCH_MAX_CHARS 32
 
+static gchar *statusline_search_format(const StatuslineState *state);
+
 static gchar *statusline_component_format(StatuslineComponent component,
     const StatuslineState *state)
 {
@@ -22,20 +24,27 @@ static gchar *statusline_component_format(StatuslineComponent component,
         }
         return g_strdup(state->pending_keys);
     case STATUSLINE_COMPONENT_SEARCH:
-        if (state->search_text == NULL || state->search_text[0] == '\0') {
-            return NULL;
-        }
-        if (g_utf8_strlen(state->search_text, -1) > SEARCH_MAX_CHARS) {
-            const char *cut = g_utf8_offset_to_pointer(state->search_text,
-                SEARCH_MAX_CHARS);
-
-            return g_strdup_printf("/%.*s…",
-                (int)(cut - state->search_text), state->search_text);
-        }
-        return g_strconcat("/", state->search_text, NULL);
+        return statusline_search_format(state);
     default:
         return NULL;
     }
+}
+
+/* "/query", cut after SEARCH_MAX_CHARS characters, then " …" while seeking */
+static gchar *statusline_search_format(const StatuslineState *state)
+{
+    const char *query = state->search_text;
+    const char *pending = state->search_pending ? " …" : "";
+
+    if (query == NULL || query[0] == '\0') {
+        return NULL;
+    }
+    if (g_utf8_strlen(query, -1) > SEARCH_MAX_CHARS) {
+        const char *cut = g_utf8_offset_to_pointer(query, SEARCH_MAX_CHARS);
+
+        return g_strdup_printf("/%.*s…%s", (int)(cut - query), query, pending);
+    }
+    return g_strconcat("/", query, pending, NULL);
 }
 
 static gchar *statusline_section_format(const GArray *section,

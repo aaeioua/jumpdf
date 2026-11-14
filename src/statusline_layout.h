@@ -33,6 +33,7 @@ typedef struct {
     unsigned int mark;        /* 0-based Mark index */
     const char *pending_keys;
     const char *search_text;
+    gboolean search_pending;
 } StatuslineState;
 
 StatuslineComponent statusline_component_from_str(const char *str);
