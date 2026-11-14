@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 
 #include "statusline_format.h"
 
@@ -30,21 +31,35 @@ static gchar *statusline_component_format(StatuslineComponent component,
     }
 }
 
-/* "/query", cut after SEARCH_MAX_CHARS characters, then " …" while seeking */
+/*
+ * "/query [position/total]", the query cut after SEARCH_MAX_CHARS characters,
+ * with "?" for a position not known yet and "+" while still scanning, then
+ * " …" while seeking
+ */
 static gchar *statusline_search_format(const StatuslineState *state)
 {
     const char *query = state->search_text;
+    const char *scanning = state->search_scanning ? "+" : "";
     const char *pending = state->search_pending ? " …" : "";
+    int query_bytes;
+    const char *cut_mark = "";
+    gchar position[16] = "?";
 
     if (query == NULL || query[0] == '\0') {
         return NULL;
     }
+    query_bytes = (int)strlen(query);
     if (g_utf8_strlen(query, -1) > SEARCH_MAX_CHARS) {
-        const char *cut = g_utf8_offset_to_pointer(query, SEARCH_MAX_CHARS);
-
-        return g_strdup_printf("/%.*s…%s", (int)(cut - query), query, pending);
+        query_bytes = (int)(g_utf8_offset_to_pointer(query, SEARCH_MAX_CHARS) -
+            query);
+        cut_mark = "…";
     }
-    return g_strconcat("/", query, pending, NULL);
+    if (state->search_position >= 0) {
+        g_snprintf(position, sizeof(position), "%d", state->search_position);
+    }
+
+    return g_strdup_printf("/%.*s%s [%s/%u%s]%s", query_bytes, query,
+        cut_mark, position, state->search_total, scanning, pending);
 }
 
 static gchar *statusline_section_format(const GArray *section,

@@ -34,6 +34,9 @@ typedef struct {
     const char *pending_keys;
     const char *search_text;
     gboolean search_pending;
+    int search_position;      /* -1 while unknown */
+    guint search_total;
+    gboolean search_scanning; /* search_total is not final yet */
 } StatuslineState;
 
 StatuslineComponent statusline_component_from_str(const char *str);

@@ -9,6 +9,8 @@ typedef struct {
     gboolean reported_unknown;
     SearchRect *rects;
     guint n_rects;
+    /* Fewer than n_rects when a match spans a line break */
+    guint n_matches;
 } SearchPage;
 
 /* A finished scan, handed from the worker to the main thread */
@@ -17,6 +19,7 @@ typedef struct {
     int page;
     SearchRect *rects;
     guint n_rects;
+    guint n_matches;
 } SearchResult;
 
 typedef struct {
@@ -40,9 +43,13 @@ struct Search {
     char *query;
     guint64 generation;
     SearchPage *pages;
+    int n_scanned;
+    guint n_matches;
     SearchSeek seek;
     /* search_seeking as `changed` last reported it */
     gboolean notified_seeking;
+    /* search_tally may have changed since the last `tallied` */
+    gboolean tally_changed;
 
     /* Shared with the worker, under `mutex` */
     GMutex mutex;
@@ -65,6 +72,7 @@ struct Search {
 
 static gpointer search_worker(gpointer data);
 static int search_next_page_locked(Search *search);
+static PopplerFindFlags search_find_flags(const char *query);
 static SearchResult *search_scan(ViewerInfo *info, const char *query,
     guint64 generation, int page);
 static gboolean search_deliver(gpointer data);
@@ -152,6 +160,9 @@ void search_set_query(Search *search, const char *query, int from_page)
     from_page = search_clamp_page(search, from_page);
 
     search_clear_pages(search);
+    search->n_scanned = 0;
+    search->n_matches = 0;
+    search->tally_changed = TRUE;
     g_free(search->query);
     search->query = query != NULL && query[0] != '\0' ? g_strdup(query) : NULL;
     search->generation++;
@@ -212,6 +223,36 @@ void search_seek(Search *search, int from_page, int pages)
 gboolean search_seeking(const Search *search)
 {
     return search->seek.active;
+}
+
+SearchTally search_tally(const Search *search, int page)
+{
+    SearchTally tally = {
+        .position = 0,
+        .total = search->n_matches,
+        .complete = search->query == NULL ||
+            search->n_scanned == search->n_pages,
+    };
+
+    if (search->query == NULL) {
+        return tally;
+    }
+
+    for (int p = 0; p <= page && p < search->n_pages; p++) {
+        const SearchPage *entry = &search->pages[p];
+
+        if (!entry->scanned) {
+            tally.position = -1;
+            break;
+        }
+        if (p < page) {
+            tally.position += entry->n_matches;
+        } else if (entry->n_matches > 0) {
+            tally.position++;
+        }
+    }
+
+    return tally;
 }
 
 gboolean search_page_matches(Search *search, int page,
@@ -321,11 +362,30 @@ static int search_next_page_locked(Search *search)
     return -1;
 }
 
+/*
+ * Across line breaks, and smart-case: ignores case unless `query` has an
+ * uppercase letter
+ */
+static PopplerFindFlags search_find_flags(const char *query)
+{
+    for (const char *p = query; p != NULL && *p != '\0';
+         p = g_utf8_next_char(p)) {
+        gunichar c = g_utf8_get_char(p);
+
+        if (g_unichar_isupper(c) || g_unichar_istitle(c)) {
+            return POPPLER_FIND_MULTILINE | POPPLER_FIND_CASE_SENSITIVE;
+        }
+    }
+
+    return POPPLER_FIND_MULTILINE;
+}
+
 /* Scans on a short-lived page so Poppler's text cache is freed with it */
 static SearchResult *search_scan(ViewerInfo *info, const char *query,
     guint64 generation, int page)
 {
     SearchResult *result = g_new0(SearchResult, 1);
+    const PopplerFindFlags flags = search_find_flags(query);
     GList *matches = NULL;
 
     result->generation = generation;
@@ -334,7 +394,8 @@ static SearchResult *search_scan(ViewerInfo *info, const char *query,
     viewer_info_lock(info);
     PopplerPage *poppler_page = poppler_document_get_page(info->doc, page);
     if (poppler_page != NULL) {
-        matches = poppler_page_find_text(poppler_page, query);
+        matches = poppler_page_find_text_with_options(poppler_page, query,
+            flags);
         g_object_unref(poppler_page);
     }
     viewer_info_unlock(info);
@@ -346,6 +407,9 @@ static SearchResult *search_scan(ViewerInfo *info, const char *query,
     guint i = 0;
     for (GList *l = matches; l != NULL; l = l->next, i++) {
         const PopplerRectangle *match = l->data;
+        if (!poppler_rectangle_find_get_match_continued(match)) {
+            result->n_matches++;
+        }
         result->rects[i] = (SearchRect){
             .x1 = match->x1,
             .y1 = match->y1,
@@ -385,6 +449,10 @@ static gboolean search_deliver(gpointer data)
         entry->scanned = TRUE;
         entry->rects = g_steal_pointer(&result->rects);
         entry->n_rects = result->n_rects;
+        entry->n_matches = result->n_matches;
+        search->n_scanned++;
+        search->n_matches += entry->n_matches;
+        search->tally_changed = TRUE;
         changed |= entry->reported_unknown;
     }
     g_ptr_array_free(results, TRUE);
@@ -411,6 +479,12 @@ static gboolean search_deliver(gpointer data)
     }
     if (changed && search->callbacks.changed != NULL) {
         search->callbacks.changed(search->user_data);
+    }
+    if (search->tally_changed) {
+        search->tally_changed = FALSE;
+        if (search->callbacks.tallied != NULL) {
+            search->callbacks.tallied(search->user_data);
+        }
     }
 
     return G_SOURCE_CONTINUE;

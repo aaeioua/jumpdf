@@ -35,9 +35,14 @@ typedef struct {
      * which is never `from`. The seek is over.
      */
     void (*found)(int from, int to, gpointer user_data);
+    /*
+     * search_tally may have changed: pages have been scanned, or the query
+     * changed. Coalesced as `changed`.
+     */
+    void (*tallied)(gpointer user_data);
 } SearchCallbacks;
 
-/* `callbacks` is copied. It may be NULL, and so may either member. */
+/* `callbacks` is copied. It may be NULL, and so may any member. */
 Search *search_new(ViewerInfo *info, const SearchCallbacks *callbacks,
     gpointer user_data);
 /* Waits for the page being scanned, if any. Call before `info` is destroyed. */
@@ -46,6 +51,10 @@ void search_free(Search *search);
 /*
  * Copies `query`; NULL or "" clears it. Forgets every match, ends any seek
  * without `found`, and scans outward from `from_page`.
+ *
+ * Matching ignores case unless `query` has an uppercase letter, and a line
+ * break in the text matches a space in `query`. A match can span two lines,
+ * dropping a hyphen at the end of the first.
  *
  * A non-empty query also starts a seek from `from_page` that counts
  * `from_page` itself: it finds the first matching page at or after
@@ -71,6 +80,26 @@ void search_seek(Search *search, int from_page, int pages);
  * the seek's end, so calls between those always add to the same seek.
  */
 gboolean search_seeking(const Search *search);
+
+typedef struct {
+    /*
+     * Matches on pages before the given page, plus 1 when that page matches:
+     * the first match on it, or the last one before it. -1 until all of
+     * those pages have been scanned.
+     */
+    int position;
+    /* Matches on the pages scanned so far */
+    guint total;
+    /* Every page has been scanned, so `total` is final */
+    gboolean complete;
+} SearchTally;
+
+/*
+ * Tallies the current query's matches, as seen from `page`. A match across
+ * a line break is one match. Without a query, every page counts as scanned
+ * with no matches.
+ */
+SearchTally search_tally(const Search *search, int page);
 
 /*
  * When `page` has been scanned for the current query, sets *rects (valid

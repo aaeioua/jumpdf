@@ -29,6 +29,7 @@ static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step);
 static void window_update_statusline(Window *win);
 static void window_on_search_changed(gpointer user_data);
 static void window_on_search_found(int from, int to, gpointer user_data);
+static void window_on_search_tallied(gpointer user_data);
 static void window_populate_toc(Window *win);
 static void window_add_toc_entries(Window *win, PopplerIndexIter *iter, int level);
 
@@ -217,6 +218,7 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     const SearchCallbacks search_callbacks = {
         .changed = window_on_search_changed,
         .found = window_on_search_found,
+        .tallied = window_on_search_tallied,
     };
     Search *search;
     ViewerLinks *links;
@@ -340,9 +342,16 @@ static void window_show_help_dialog(Window *win)
     gtk_window_present(GTK_WINDOW(dialog));
 }
 
+/* Pre-filled with the current query, selected so typing replaces it */
 static void window_show_search_dialog(Window *win)
 {
+    const char *query = search_query(win->viewer->search);
+    GtkEditable *entry = GTK_EDITABLE(win->search_entry);
+
+    gtk_editable_set_text(entry, query != NULL ? query : "");
     gtk_window_present(GTK_WINDOW(win->search_window));
+    gtk_widget_grab_focus(win->search_entry);
+    gtk_editable_select_region(entry, 0, -1);
 }
 
 static void window_toggle_toc(Window *win)
@@ -470,6 +479,8 @@ static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step)
 static void window_update_statusline(Window *win)
 {
     ViewerCursor *mark = group_selection_current_mark(win->selection);
+    const SearchTally tally = search_tally(win->viewer->search,
+        mark->current_page);
     StatuslineState state = {
         .page = mark->current_page,
         .n_pages = win->viewer->info->n_pages,
@@ -480,6 +491,9 @@ static void window_update_statusline(Window *win)
         .pending_keys = input_pending(win->input),
         .search_text = search_query(win->viewer->search),
         .search_pending = search_seeking(win->viewer->search),
+        .search_position = tally.position,
+        .search_total = tally.total,
+        .search_scanning = !tally.complete,
     };
 
     statusline_update(win->statusline, &state);
@@ -500,6 +514,11 @@ static void window_on_search_found(int from, int to, gpointer user_data)
     if (viewer_goto_found_page(win->viewer, from, to)) {
         window_redraw_document_windows(win);
     }
+}
+
+static void window_on_search_tallied(gpointer user_data)
+{
+    window_update_statusline(user_data);
 }
 
 static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,
