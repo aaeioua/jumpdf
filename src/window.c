@@ -231,8 +231,24 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     win->uri = g_file_get_uri(file);
     win->mark_manager = mark_manager;
     win->selection = viewer_mark_manager_attach(mark_manager);
-    win->viewer = viewer_new(info, win->selection, search, links);
+    const ViewportRules rules = {
+        .steps = g_config->steps,
+        .min_scale = g_config->min_scale,
+        .scale_step = g_config->scale_step,
+        .max_page_pixels = RENDERER_MAX_PAGE_PIXELS,
+    };
+    win->viewer = viewer_new(info, win->selection, search, links, &rules);
     win->renderer = renderer_new(win->view);
+
+    /* Marks from the Mark store may lie beyond a since-shortened document */
+    for (unsigned int g = 0; g < NUM_GROUPS; g++) {
+        ViewerMarkGroup *group = mark_manager->groups[g];
+        for (unsigned int m = 0; group != NULL && m < NUM_MARKS; m++) {
+            if (group->marks[m] != NULL) {
+                viewport_settle(win->viewer->viewport, group->marks[m]);
+            }
+        }
+    }
 
     window_populate_toc(win);
     window_update_statusline(win);

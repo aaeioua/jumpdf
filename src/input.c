@@ -3,7 +3,6 @@
 #include <gtk/gtk.h>
 
 #include "input.h"
-#include "config.h"
 #include "utils.h"
 
 /* The Count, and a link number, stop growing after this many digits */
@@ -255,9 +254,6 @@ InputRequest input_feed(Input *input, Viewer *viewer, guint keyval)
         request = dispatch(input, viewer, keyval);
     }
 
-    viewer_cursor_handle_offset_update(viewer_current_mark(viewer),
-        viewer->info->n_pages);
-
     return request;
 }
 
@@ -269,11 +265,9 @@ void input_scroll(Input *input, Viewer *viewer, double dx, double dy,
     ViewerCursor *mark = viewer_current_mark(viewer);
 
     if (zoom) {
-        viewer_cursor_set_scale(mark, mark->scale - dy * g_config->scale_step);
+        viewport_zoom(viewer->viewport, mark, -dy);
     } else {
-        mark->x_offset -= dx;
-        mark->y_offset += dy;
-        viewer_cursor_handle_offset_update(mark, viewer->info->n_pages);
+        viewport_scroll(viewer->viewport, mark, -dx, dy);
     }
 }
 
@@ -496,36 +490,35 @@ static InputRequest run_binding(Input *input, Viewer *viewer,
 static InputRequest execute(Input *input, Viewer *viewer, Command command)
 {
     ViewerCursor *mark = viewer_current_mark(viewer);
-    const double half_page = g_config->steps / 2.0;
+    const Viewport *viewport = viewer->viewport;
+    const double count = command.count;
 
     switch (command.kind) {
     case COMMAND_NONE:
         break;
     case COMMAND_MOVE_DOWN:
-        mark->y_offset += command.count;
+        viewport_scroll(viewport, mark, 0, count);
         break;
     case COMMAND_MOVE_UP:
-        mark->y_offset -= command.count;
+        viewport_scroll(viewport, mark, 0, -count);
         break;
     case COMMAND_MOVE_LEFT:
-        mark->x_offset += command.count;
+        viewport_scroll(viewport, mark, count, 0);
         break;
     case COMMAND_MOVE_RIGHT:
-        mark->x_offset -= command.count;
+        viewport_scroll(viewport, mark, -count, 0);
         break;
     case COMMAND_HALF_PAGE_DOWN:
-        mark->y_offset += command.count * half_page;
+        viewport_scroll_pages(viewport, mark, count / 2.0);
         break;
     case COMMAND_HALF_PAGE_UP:
-        mark->y_offset -= command.count * half_page;
+        viewport_scroll_pages(viewport, mark, -count / 2.0);
         break;
     case COMMAND_ZOOM_IN:
-        viewer_cursor_set_scale(mark,
-            mark->scale + command.count * g_config->scale_step);
+        viewport_zoom(viewport, mark, count);
         break;
     case COMMAND_ZOOM_OUT:
-        viewer_cursor_set_scale(mark,
-            mark->scale - command.count * g_config->scale_step);
+        viewport_zoom(viewport, mark, -count);
         break;
     case COMMAND_SEARCH_NEXT:
         search_seek(viewer->search, mark->current_page, (int)command.count);
@@ -534,7 +527,7 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
         search_seek(viewer->search, mark->current_page, -(int)command.count);
         break;
     case COMMAND_RESET_ZOOM:
-        viewer_cursor_set_scale(mark, 1.0);
+        viewport_reset_zoom(viewport, mark);
         break;
     case COMMAND_TOGGLE_CENTER_MODE:
         viewer_cursor_toggle_center_mode(mark);
@@ -543,21 +536,19 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
         viewer_cursor_toggle_dark_mode(mark);
         break;
     case COMMAND_FIT_WIDTH:
-        viewport_fit_width(viewer->viewport, mark);
+        viewport_fit_width(viewport, mark);
         break;
     case COMMAND_FIT_HEIGHT:
-        viewport_fit_height(viewer->viewport, mark);
+        viewport_fit_height(viewport, mark);
         break;
     case COMMAND_FIRST_PAGE:
-        mark->current_page = 0;
-        mark->y_offset = 0;
+        viewport_goto_page(viewport, mark, 0);
         break;
     case COMMAND_LAST_PAGE:
-        mark->current_page = viewer->info->n_pages - 1;
-        mark->y_offset = 0;
+        viewport_goto_page(viewport, mark, viewer->info->n_pages - 1);
         break;
     case COMMAND_GOTO_PAGE:
-        viewport_goto_page(viewer->viewport, mark, (int)command.count - 1);
+        viewport_goto_page(viewport, mark, (int)command.count - 1);
         break;
     case COMMAND_FOLLOW_LINK:
         follow_link(viewer, command.count);

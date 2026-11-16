@@ -27,7 +27,7 @@ Default value: "~/Documents"
 
 .TP
 .B steps
-Description: Defines the number of steps for navigation.
+Description: Number of steps to scroll through one page.
 .RS
 Value type: Integer
 .RE
@@ -37,7 +37,7 @@ Default value: 15
 
 .TP
 .B min_scale
-Description: Sets the minimum scale for zooming.
+Description: Sets the minimum scale for zooming. Fitting the page to the window can go below it.
 .RS
 Value type: Float
 .RE

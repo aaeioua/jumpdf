@@ -26,7 +26,4 @@ void viewer_cursor_init(ViewerCursor *cursor,
 void viewer_cursor_destroy(ViewerCursor *cursor);
 
 void viewer_cursor_toggle_center_mode(ViewerCursor *cursor);
-void viewer_cursor_center(ViewerCursor *cursor);
 void viewer_cursor_toggle_dark_mode(ViewerCursor *cursor);
-void viewer_cursor_set_scale(ViewerCursor *cursor, double new_scale);
-void viewer_cursor_handle_offset_update(ViewerCursor *cursor, int n_pages);

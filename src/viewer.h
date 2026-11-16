@@ -16,7 +16,7 @@ typedef struct Viewer {
 } Viewer;
 
 Viewer *viewer_new(ViewerInfo *info, GroupSelection *selection, Search *search,
-    ViewerLinks *links);
+    ViewerLinks *links, const ViewportRules *rules);
 void viewer_destroy(Viewer *viewer);
 
 ViewerCursor *viewer_current_mark(const Viewer *viewer);

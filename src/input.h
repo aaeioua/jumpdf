@@ -33,10 +33,7 @@ typedef struct {
 Input *input_new(void);
 void input_free(Input *input);
 
-/*
- * Applies the Command `keyval` completes, if any, to the Viewer, then
- * normalises the current Mark's offset.
- */
+/* Applies the Command `keyval` completes, if any, to the Viewer */
 InputRequest input_feed(Input *input, Viewer *viewer, guint keyval);
 /*
  * Scrolls the current Mark by (dx, dy), or with `zoom` scales it by dy steps.

@@ -2,12 +2,13 @@
 
 #include "viewer.h"
 
-static Viewport *viewport_new_for_document(ViewerInfo *info);
+static Viewport *viewport_new_for_document(ViewerInfo *info,
+    const ViewportRules *rules);
 
 Viewer *viewer_new(ViewerInfo *info, GroupSelection *selection, Search *search,
-    ViewerLinks *links)
+    ViewerLinks *links, const ViewportRules *rules)
 {
-    Viewport *viewport = viewport_new_for_document(info);
+    Viewport *viewport = viewport_new_for_document(info, rules);
     if (viewport == NULL) {
         return NULL;
     }
@@ -59,7 +60,7 @@ gboolean viewer_goto_found_page(Viewer *viewer, int from, int to)
         return FALSE;
     }
 
-    viewport_goto_page(viewer->viewport, mark, to);
+    viewport_goto_dest(viewer->viewport, mark, to, false, 0);
     return TRUE;
 }
 
@@ -69,7 +70,7 @@ void viewer_goto_dest(Viewer *viewer, PopplerDest *dest)
         return;
     }
 
-    viewport_goto_page_top(viewer->viewport, viewer_current_mark(viewer),
+    viewport_goto_dest(viewer->viewport, viewer_current_mark(viewer),
         dest->page_num - 1, dest->change_top == 1, dest->top);
 }
 
@@ -101,7 +102,8 @@ void viewer_execute_action(Viewer *viewer, PopplerAction *action)
     }
 }
 
-static Viewport *viewport_new_for_document(ViewerInfo *info)
+static Viewport *viewport_new_for_document(ViewerInfo *info,
+    const ViewportRules *rules)
 {
     ViewportSize *sizes = g_new(ViewportSize, info->n_pages);
     for (int i = 0; i < info->n_pages; i++) {
@@ -109,7 +111,7 @@ static Viewport *viewport_new_for_document(ViewerInfo *info)
             &sizes[i].width, &sizes[i].height);
     }
 
-    Viewport *viewport = viewport_new(sizes, info->n_pages);
+    Viewport *viewport = viewport_new(sizes, info->n_pages, rules);
     g_free(sizes);
 
     return viewport;

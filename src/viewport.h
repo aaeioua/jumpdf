@@ -28,10 +28,21 @@ typedef struct {
     double column_left;
 } ViewportLayout;
 
+typedef struct {
+    int steps;            /* > 0 */
+    double min_scale;     /* finite, > 0 */
+    double scale_step;    /* finite, > 0 */
+    int max_page_pixels;  /* > 0: the most pixels a page may take on either side */
+} ViewportRules;
+
 typedef struct Viewport Viewport;
 
-/* Copies `page_sizes` (unscaled, PDF points). `n_pages` must be > 0. */
-Viewport *viewport_new(const ViewportSize *page_sizes, int n_pages);
+/*
+ * Copies `page_sizes` (unscaled, PDF points) and `rules`. NULL if
+ * n_pages <= 0 or the rules are invalid.
+ */
+Viewport *viewport_new(const ViewportSize *page_sizes, int n_pages,
+    const ViewportRules *rules);
 void viewport_destroy(Viewport *viewport);
 
 /* The view size is 0x0 until set. Fitting is a no-op while it is empty. */
@@ -39,17 +50,47 @@ void viewport_set_view_size(Viewport *viewport, double width, double height);
 
 ViewportSize viewport_get_page_size(const Viewport *viewport, int page);
 
-ViewportLayout viewport_layout(const Viewport *viewport, const ViewerCursor *cursor);
+ViewportLayout viewport_layout(const Viewport *viewport, const ViewerCursor *mark);
 /* `page` must lie within [layout->from, layout->to]. */
 ViewportRect viewport_layout_page_rect(const Viewport *viewport,
     const ViewportLayout *layout, int page);
 
-void viewport_fit_width(const Viewport *viewport, ViewerCursor *cursor);
-void viewport_fit_height(const Viewport *viewport, ViewerCursor *cursor);
-void viewport_goto_page(const Viewport *viewport, ViewerCursor *cursor, int page);
 /*
- * `top` is measured from the bottom of the page, as in PopplerDest.
- * Pass has_top = FALSE when the destination does not specify one.
+ * Mark motion. Each call leaves the Mark in range: on a page of the document,
+ * no further than half a page beyond either end, and with x_offset 0 in
+ * center mode.
  */
-void viewport_goto_page_top(const Viewport *viewport, ViewerCursor *cursor,
+
+/* `dx_steps` has the sign of x_offset and only applies outside center mode */
+void viewport_scroll(const Viewport *viewport, ViewerCursor *mark,
+    double dx_steps, double dy_steps);
+/* Scrolls `pages` * steps */
+void viewport_scroll_pages(const Viewport *viewport, ViewerCursor *mark,
+    double pages);
+/*
+ * Changes the scale by zoom_steps * scale_step, up to max_scale: the scale at
+ * which the document's largest page side takes max_page_pixels. Zooming out
+ * stops at min_scale, or where it started if that was already below.
+ */
+void viewport_zoom(const Viewport *viewport, ViewerCursor *mark,
+    double zoom_steps);
+/* Sets the scale to 1 within [min_scale, max_scale] */
+void viewport_reset_zoom(const Viewport *viewport, ViewerCursor *mark);
+/* A fit may go below min_scale, but never above max_scale */
+void viewport_fit_width(const Viewport *viewport, ViewerCursor *mark);
+void viewport_fit_height(const Viewport *viewport, ViewerCursor *mark);
+/* Centres the page, clamped to the document, and keeps the zoom */
+void viewport_goto_page(const Viewport *viewport, ViewerCursor *mark, int page);
+/*
+ * Fits the page's height, then puts the destination line at the view's top,
+ * or centres the page without one. `top` is measured from the bottom of the
+ * page, as in PopplerDest; one at or beyond the page's height counts as none.
+ */
+void viewport_goto_dest(const Viewport *viewport, ViewerCursor *mark,
     int page, bool has_top, double top);
+/*
+ * Brings a Mark from elsewhere, such as the Mark store, into range: clamps
+ * its page and position, caps its scale at max_scale (keeping one below
+ * min_scale) and centres it in center mode. A Mark in range is unchanged.
+ */
+void viewport_settle(const Viewport *viewport, ViewerCursor *mark);

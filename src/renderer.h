@@ -2,6 +2,9 @@
 
 #include "viewer.h"
 
+/* Cairo's image surface limit, in pixels on either side */
+#define RENDERER_MAX_PAGE_PIXELS 32767
+
 typedef struct Renderer Renderer;
 
 Renderer *renderer_new(GtkWidget *view);
