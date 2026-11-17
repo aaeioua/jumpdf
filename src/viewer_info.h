@@ -18,5 +18,17 @@ void viewer_info_destroy(ViewerInfo *info);
 void viewer_info_lock(ViewerInfo *info);
 void viewer_info_unlock(ViewerInfo *info);
 
-PopplerDest *viewer_info_get_dest(ViewerInfo *info, PopplerDest *dest);
+/* Where a destination leads */
+typedef struct {
+    int page;
+    bool has_top;
+    double top; /* from the page's bottom */
+} ViewerTarget;
+
+/*
+ * Looks up named destinations under the document lock. Never frees or keeps
+ * `dest`.
+ */
+ViewerTarget viewer_info_resolve_dest(ViewerInfo *info,
+    const PopplerDest *dest);
 PopplerPage *viewer_info_get_poppler_page(ViewerInfo *info, int page_num);

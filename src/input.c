@@ -592,8 +592,12 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
     case COMMAND_OPEN_FILE:
         return INPUT_REQUEST_OPEN_FILE;
     case COMMAND_TOGGLE_OUTLINE:
-        input->mode = input->mode == MODE_OUTLINE ? MODE_NORMAL : MODE_OUTLINE;
-        return INPUT_REQUEST_TOGGLE_OUTLINE;
+        if (input->mode == MODE_OUTLINE) {
+            input->mode = MODE_NORMAL;
+            return INPUT_REQUEST_CLOSE_OUTLINE;
+        }
+        input->mode = MODE_OUTLINE;
+        return INPUT_REQUEST_OPEN_OUTLINE;
     case COMMAND_OUTLINE_NEXT:
         return INPUT_REQUEST_OUTLINE_NEXT;
     case COMMAND_OUTLINE_PREVIOUS:

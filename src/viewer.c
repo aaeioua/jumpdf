@@ -64,21 +64,20 @@ gboolean viewer_goto_found_page(Viewer *viewer, int from, int to)
     return TRUE;
 }
 
-void viewer_goto_dest(Viewer *viewer, PopplerDest *dest)
+void viewer_goto_target(Viewer *viewer, ViewerTarget target)
 {
-    if (dest == NULL) {
+    if (target.page < 0) {
         return;
     }
 
     viewport_goto_dest(viewer->viewport, viewer_current_mark(viewer),
-        dest->page_num - 1, dest->change_top == 1, dest->top);
+        target.page, target.has_top, target.top);
 }
 
 void viewer_execute_action(Viewer *viewer, PopplerAction *action)
 {
     PopplerActionUri *action_uri;
     GError *error = NULL;
-    PopplerDest *dest;
 
     switch (action->type) {
     case POPPLER_ACTION_URI:
@@ -90,10 +89,9 @@ void viewer_execute_action(Viewer *viewer, PopplerAction *action)
         }
         break;
     case POPPLER_ACTION_GOTO_DEST:
-        dest = viewer_info_get_dest(viewer->info, action->goto_dest.dest);
-        viewer_goto_dest(viewer, dest);
-        if (dest != NULL && dest != action->goto_dest.dest) {
-            poppler_dest_free(dest);
+        if (action->goto_dest.dest != NULL) {
+            viewer_goto_target(viewer, viewer_info_resolve_dest(viewer->info,
+                action->goto_dest.dest));
         }
         break;
     default:

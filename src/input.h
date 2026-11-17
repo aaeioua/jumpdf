@@ -13,7 +13,8 @@ typedef struct Input Input;
 /* What the window must do itself after a key press */
 typedef enum {
     INPUT_REQUEST_NONE,
-    INPUT_REQUEST_TOGGLE_OUTLINE,
+    INPUT_REQUEST_OPEN_OUTLINE,
+    INPUT_REQUEST_CLOSE_OUTLINE,
     INPUT_REQUEST_OUTLINE_NEXT,
     INPUT_REQUEST_OUTLINE_PREVIOUS,
     INPUT_REQUEST_OUTLINE_ACTIVATE,

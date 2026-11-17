@@ -22,5 +22,9 @@ void viewer_destroy(Viewer *viewer);
 ViewerCursor *viewer_current_mark(const Viewer *viewer);
 
 gboolean viewer_goto_found_page(Viewer *viewer, int from, int to);
-void viewer_goto_dest(Viewer *viewer, PopplerDest *dest);
+/*
+ * Fits and places the current Mark on `target`; does nothing if target.page
+ * is -1
+ */
+void viewer_goto_target(Viewer *viewer, ViewerTarget target);
 void viewer_execute_action(Viewer *viewer, PopplerAction *action);

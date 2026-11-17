@@ -15,23 +15,20 @@
 #include "input.h"
 #include "renderer.h"
 #include "statusline.h"
+#include "outline.h"
+#include "outline_panel.h"
 
 static void window_redraw_document_windows(Window *win);
 static void window_handle_request(Window *win, InputRequest request);
 static void window_toggle_fullscreen(Window *win);
 static void window_show_search_dialog(Window *win);
 static void window_show_help_dialog(Window *win);
-static void window_toggle_toc(Window *win);
-static void window_focus_toc_search(Window *win);
-static void window_execute_toc_row(Window *win, GtkListBoxRow *row);
-static void window_step_toc_selection(Window *win, int step);
-static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step);
+static void window_on_outline_activated(ViewerTarget target,
+    gpointer user_data);
 static void window_update_statusline(Window *win);
 static void window_on_search_changed(gpointer user_data);
 static void window_on_search_found(int from, int to, gpointer user_data);
 static void window_on_search_tallied(gpointer user_data);
-static void window_populate_toc(Window *win);
-static void window_add_toc_entries(Window *win, PopplerIndexIter *iter, int level);
 
 static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,
                                guint keycode, GdkModifierType state,
@@ -44,9 +41,6 @@ static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
                           int height, gpointer user_data);
 static void on_search_entry_activate(GtkEntry *entry, gpointer user_data);
 static gboolean on_search_window_key_press(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType state, gpointer user_data);
-static void on_toc_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
-static void on_toc_search_changed(GtkSearchEntry *entry, gpointer user_data);
-static void on_toc_search_stopped(GtkSearchEntry *entry, gpointer user_data);
 
 struct _Window {
     // TODO: Breakdown into separate structs
@@ -62,10 +56,7 @@ struct _Window {
 
     Statusline *statusline;
 
-    GtkWidget *toc_scroll_window;
-    GtkWidget *toc_box;
-    GtkWidget *toc_search_entry;
-    GtkWidget *toc_container;
+    OutlinePanel *outline_panel;
 
     GtkWidget *search_window;
     GtkWidget *search_box;
@@ -98,6 +89,7 @@ static void window_init(Window *win)
     win->renderer = NULL;
     win->first_draw = TRUE;
     win->input = input_new();
+    win->outline_panel = NULL;
 
     win->event_controller = gtk_event_controller_key_new();
     g_signal_connect_object(win->event_controller, "key-pressed",
@@ -125,27 +117,6 @@ static void window_init(Window *win)
     gtk_widget_set_vexpand(win->view_box, TRUE);
     gtk_box_append(GTK_BOX(win->view_box), win->view);
     gtk_box_append(GTK_BOX(win->view_box), GTK_WIDGET(win->statusline));
-
-    win->toc_search_entry = gtk_search_entry_new();
-    g_signal_connect(win->toc_search_entry, "search-changed", G_CALLBACK(on_toc_search_changed), win);
-    g_signal_connect(win->toc_search_entry, "stop-search", G_CALLBACK(on_toc_search_stopped), win);
-
-    win->toc_container = gtk_list_box_new();
-    gtk_widget_set_hexpand(win->toc_container, TRUE);
-    g_signal_connect(win->toc_container, "row-activated", G_CALLBACK(on_toc_row_activated), win);
-
-    win->toc_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_box_append(GTK_BOX(win->toc_box), win->toc_search_entry);
-    gtk_box_append(GTK_BOX(win->toc_box), win->toc_container);
-
-    win->toc_scroll_window = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(win->toc_scroll_window), win->toc_box);
-    gtk_widget_set_visible(win->toc_scroll_window, FALSE);
-    /*
-    * in window_toggle_toc, gtk_box_prepend only increases the ref count
-    * the first time it is called, so we need to manually increase it here
-    */
-    g_object_ref(win->toc_scroll_window);
 
     win->search_window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(win->search_window), "Search");
@@ -250,7 +221,11 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
         }
     }
 
-    window_populate_toc(win);
+    win->outline_panel = outline_panel_new(outline_read(info),
+        window_on_outline_activated, win);
+    gtk_box_prepend(GTK_BOX(win->main_container),
+        GTK_WIDGET(win->outline_panel));
+
     window_update_statusline(win);
 
     file_info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME, G_FILE_QUERY_INFO_NONE, NULL, &error);
@@ -370,46 +345,6 @@ static void window_show_search_dialog(Window *win)
     gtk_editable_select_region(entry, 0, -1);
 }
 
-static void window_toggle_toc(Window *win)
-{
-    gboolean is_visible = gtk_widget_get_visible(win->toc_scroll_window);
-
-    gtk_widget_set_visible(win->toc_scroll_window, !is_visible);
-
-    // It is necessary to remove from main_container in addition,
-    // otherwise it will still occupy space
-    if (is_visible) {
-        g_object_ref(win->toc_scroll_window);
-        gtk_box_remove(GTK_BOX(win->main_container), win->toc_scroll_window);
-    } else {
-        gtk_box_prepend(GTK_BOX(win->main_container), win->toc_scroll_window);
-        g_object_unref(win->toc_scroll_window);
-    }
-}
-
-static void window_focus_toc_search(Window *win)
-{
-    gtk_widget_grab_focus(win->toc_search_entry);
-}
-
-static void window_execute_toc_row(Window *win, GtkListBoxRow *row)
-{
-    GtkWidget *toc_entry_box;
-    PopplerDest *dest;
-
-    if (row != NULL) {
-        toc_entry_box = gtk_list_box_row_get_child(row);
-        dest = g_object_get_data(G_OBJECT(toc_entry_box), "dest");
-
-        if (dest) {
-            viewer_goto_dest(win->viewer, dest);
-            window_redraw_document_windows(win);
-        } else {
-            g_printerr("Error: TOC entry has no destination\n");
-        }
-    }
-}
-
 ViewerMarkManager *window_get_mark_manager(Window *win)
 {
     return win->mark_manager;
@@ -420,28 +355,37 @@ static void window_redraw_document_windows(Window *win)
     app_redraw_windows(win->app, win->mark_manager);
 }
 
+static void window_on_outline_activated(ViewerTarget target,
+    gpointer user_data)
+{
+    Window *win = user_data;
+
+    viewer_goto_target(win->viewer, target);
+    window_redraw_document_windows(win);
+}
+
 static void window_handle_request(Window *win, InputRequest request)
 {
-    GtkListBox *toc_list_box = GTK_LIST_BOX(win->toc_container);
-
     switch (request) {
     case INPUT_REQUEST_NONE:
         break;
-    case INPUT_REQUEST_TOGGLE_OUTLINE:
-        window_toggle_toc(win);
+    case INPUT_REQUEST_OPEN_OUTLINE:
+        outline_panel_set_open(win->outline_panel, true);
+        break;
+    case INPUT_REQUEST_CLOSE_OUTLINE:
+        outline_panel_set_open(win->outline_panel, false);
         break;
     case INPUT_REQUEST_OUTLINE_NEXT:
-        window_step_toc_selection(win, 1);
+        outline_panel_step(win->outline_panel, 1);
         break;
     case INPUT_REQUEST_OUTLINE_PREVIOUS:
-        window_step_toc_selection(win, -1);
+        outline_panel_step(win->outline_panel, -1);
         break;
     case INPUT_REQUEST_OUTLINE_ACTIVATE:
-        window_execute_toc_row(win,
-            gtk_list_box_get_selected_row(toc_list_box));
+        outline_panel_activate(win->outline_panel);
         break;
     case INPUT_REQUEST_OUTLINE_FOCUS_FILTER:
-        window_focus_toc_search(win);
+        outline_panel_focus_filter(win->outline_panel);
         break;
     case INPUT_REQUEST_SHOW_SEARCH:
         window_show_search_dialog(win);
@@ -456,40 +400,6 @@ static void window_handle_request(Window *win, InputRequest request)
         window_toggle_fullscreen(win);
         break;
     }
-}
-
-/* Selects the next (step 1) or previous (step -1) visible outline row */
-static void window_step_toc_selection(Window *win, int step)
-{
-    GtkListBox *toc_list_box = GTK_LIST_BOX(win->toc_container);
-    GtkListBoxRow *current_row = gtk_list_box_get_selected_row(toc_list_box);
-    GtkListBoxRow *new_row;
-
-    if (current_row == NULL) {
-        return;
-    }
-
-    new_row = window_visible_toc_row(win,
-        gtk_list_box_row_get_index(current_row) + step, step);
-    if (new_row != NULL) {
-        gtk_list_box_select_row(toc_list_box, new_row);
-    }
-}
-
-/* The first visible outline row at index, index + step, index + 2 * step... */
-static GtkListBoxRow *window_visible_toc_row(Window *win, int index, int step)
-{
-    GtkListBox *toc_list_box = GTK_LIST_BOX(win->toc_container);
-    GtkListBoxRow *row;
-
-    for (; index >= 0; index += step) {
-        row = gtk_list_box_get_row_at_index(toc_list_box, index);
-        if (row == NULL || gtk_widget_get_visible(GTK_WIDGET(row))) {
-            return row;
-        }
-    }
-
-    return NULL;
 }
 
 static void window_update_statusline(Window *win)
@@ -603,83 +513,6 @@ static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
     renderer_draw(win->renderer, cr, win->viewer);
 }
 
-static void window_populate_toc(Window *win)
-{
-    PopplerIndexIter *iter = poppler_index_iter_new(win->viewer->info->doc);
-    if (iter) {
-        window_add_toc_entries(win, iter, 0);
-        poppler_index_iter_free(iter);
-    }
-}
-
-static void window_add_toc_entries(Window *win, PopplerIndexIter *iter, int level)
-{
-    PopplerAction *action;
-    PopplerDest *dest;
-    gchar *title_markup, *page_markup;
-    GtkWidget *title_label, *page_label;
-    GtkWidget *toc_entry_box;
-    PopplerIndexIter *child;
-    GtkListBoxRow *first_row;
-
-    while (iter) {
-        action = poppler_index_iter_get_action(iter);
-        if (action && action->type == POPPLER_ACTION_GOTO_DEST) {
-            dest = viewer_info_get_dest(win->viewer->info, action->goto_dest.dest);
-
-            if (dest == NULL) {
-                poppler_action_free(action);
-                if (!poppler_index_iter_next(iter)) {
-                    break;
-                }
-                continue;
-            }
-
-            title_markup = g_strdup_printf("%*s%s", level * 2, " ", action->any.title);
-            title_label = gtk_label_new(title_markup);
-            g_free(title_markup);
-            gtk_label_set_xalign(GTK_LABEL(title_label), 0.0);
-            gtk_label_set_justify(GTK_LABEL(title_label), GTK_JUSTIFY_LEFT);
-            gtk_widget_set_hexpand(title_label, TRUE);
-
-            page_markup = g_markup_printf_escaped("%d", dest->page_num + 1);
-            page_label = gtk_label_new(page_markup);
-            g_free(page_markup);
-            gtk_label_set_xalign(GTK_LABEL(page_label), 1.0);
-            gtk_label_set_justify(GTK_LABEL(page_label), GTK_JUSTIFY_RIGHT);
-
-            toc_entry_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-            gtk_box_append(GTK_BOX(toc_entry_box), title_label);
-            gtk_box_append(GTK_BOX(toc_entry_box), page_label);
-
-            g_object_set_data_full(G_OBJECT(toc_entry_box), "dest", poppler_dest_copy(dest), (GDestroyNotify)poppler_dest_free);
-            if (action->goto_dest.dest->type == POPPLER_DEST_NAMED) {
-                // Won't be freed by poppler_action_free
-                poppler_dest_free(dest);
-            }
-
-            gtk_list_box_append(GTK_LIST_BOX(win->toc_container), toc_entry_box);
-
-            child = poppler_index_iter_get_child(iter);
-            if (child) {
-                window_add_toc_entries(win, child, level + 1);
-                poppler_index_iter_free(child);
-            }
-        }
-
-        poppler_action_free(action);
-
-        if (!poppler_index_iter_next(iter)) {
-            break;
-        }
-    }
-
-    first_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(win->toc_container), 0);
-    if (first_row != NULL) {
-        gtk_list_box_select_row(GTK_LIST_BOX(win->toc_container), first_row);
-    }
-}
-
 static void on_search_entry_activate(GtkEntry *entry, gpointer user_data) {
     Window *win = (Window *)user_data;
     const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
@@ -707,53 +540,4 @@ static gboolean on_search_window_key_press(GtkEventControllerKey *controller, gu
     default:
         return FALSE;
     }
-}
-
-static void on_toc_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data)
-{
-    UNUSED(row);
-
-    Window *win = (Window *)user_data;
-    GtkListBoxRow *selected_row = gtk_list_box_get_selected_row(box);
-
-    window_execute_toc_row(win, selected_row);
-}
-
-static void on_toc_search_changed(GtkSearchEntry *entry, gpointer user_data)
-{
-    Window *win = (Window *)user_data;
-    const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
-    GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(win->toc_container));
-    GtkWidget *box;
-    GtkWidget *title_label;
-    const gchar *child_text;
-    gboolean visible;
-    GtkListBoxRow *first_visible_row;
-
-    while (child) {
-        box = gtk_widget_get_first_child(child);
-        title_label = gtk_widget_get_first_child(box);
-        if (GTK_IS_LABEL(title_label)) {
-            child_text = gtk_label_get_text(GTK_LABEL(title_label));
-
-            visible = strcasestr(child_text, text) != NULL;
-            gtk_widget_set_visible(child, visible);
-        }
-
-        child = gtk_widget_get_next_sibling(child);
-    }
-
-    first_visible_row = window_visible_toc_row(win, 0, 1);
-    if (first_visible_row != NULL) {
-        gtk_list_box_select_row(GTK_LIST_BOX(win->toc_container), first_visible_row);
-    }
-}
-
-static void on_toc_search_stopped(GtkSearchEntry *entry, gpointer user_data)
-{
-    UNUSED(entry);
-
-    Window *win = (Window *)user_data;
-
-    gtk_widget_grab_focus(win->toc_scroll_window);
 }

@@ -2,6 +2,9 @@
 
 #include "viewer_info.h"
 
+static ViewerTarget viewer_info_resolve_explicit(const ViewerInfo *info,
+    const PopplerDest *dest);
+
 ViewerInfo *viewer_info_new(PopplerDocument *doc)
 {
     ViewerInfo *info = malloc(sizeof(ViewerInfo));
@@ -103,19 +106,35 @@ void viewer_info_unlock(ViewerInfo *info)
     g_mutex_unlock(&info->poppler_lock);
 }
 
-PopplerDest *viewer_info_get_dest(ViewerInfo *info, PopplerDest *dest)
+ViewerTarget viewer_info_resolve_dest(ViewerInfo *info, const PopplerDest *dest)
 {
-    PopplerDest *actual_dest = NULL;
+    const ViewerTarget nowhere = {.page = -1, .has_top = false, .top = 0};
+    PopplerDest *found;
+    ViewerTarget target;
 
-    if (dest->type == POPPLER_DEST_NAMED) {
-        viewer_info_lock(info);
-        actual_dest = poppler_document_find_dest(info->doc, dest->named_dest);
-        viewer_info_unlock(info);
-    } else {
-        actual_dest = dest;
+    if (dest->type != POPPLER_DEST_NAMED) {
+        return viewer_info_resolve_explicit(info, dest);
     }
 
-    return actual_dest;
+    if (dest->named_dest == NULL) {
+        return nowhere;
+    }
+
+    viewer_info_lock(info);
+    found = poppler_document_find_dest(info->doc, dest->named_dest);
+    viewer_info_unlock(info);
+
+    if (found == NULL || found->type == POPPLER_DEST_NAMED) {
+        if (found != NULL) {
+            poppler_dest_free(found);
+        }
+        return nowhere;
+    }
+
+    target = viewer_info_resolve_explicit(info, found);
+    poppler_dest_free(found);
+
+    return target;
 }
 
 PopplerPage *viewer_info_get_poppler_page(ViewerInfo *info, int page_num)
@@ -125,4 +144,23 @@ PopplerPage *viewer_info_get_poppler_page(ViewerInfo *info, int page_num)
     }
 
     return info->pages[page_num];
+}
+
+static ViewerTarget viewer_info_resolve_explicit(const ViewerInfo *info,
+    const PopplerDest *dest)
+{
+    const ViewerTarget nowhere = {.page = -1, .has_top = false, .top = 0};
+    /* Poppler numbers pages from 1, and gives 0 when it can't find the page */
+    const int page = dest->page_num - 1;
+
+    if (dest->type == POPPLER_DEST_UNKNOWN || page < 0
+        || page >= info->n_pages) {
+        return nowhere;
+    }
+
+    return (ViewerTarget){
+        .page = page,
+        .has_top = dest->change_top != 0,
+        .top = dest->top,
+    };
 }
