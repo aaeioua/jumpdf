@@ -44,6 +44,8 @@ void input_scroll(Input *input, Viewer *viewer, double dx, double dy,
     gboolean zoom);
 /* What has been typed so far. Valid until the next input_feed. */
 const char *input_pending(const Input *input);
+/* TRUE while the link numbers show */
+gboolean input_link_numbers_shown(const Input *input);
 
 /* One row per binding table row, in table order. */
 GArray *input_help(void);

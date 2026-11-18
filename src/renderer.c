@@ -5,6 +5,7 @@
 
 #define SCALE_EPSILON 1e-6
 #define PREFETCH_PAGES 1
+#define LINK_NUMBER_FONT_SIZE 12
 
 typedef enum {
     RENDERER_PAGE_NOT_RENDERED,
@@ -13,19 +14,9 @@ typedef enum {
 } RendererPageStatus;
 
 typedef struct {
-    double x1;
-    double y1;
-    double x2;
-    double y2;
-} RenderLink;
-
-typedef struct {
     double scale;
     double page_width;
     double page_height;
-    guint link_offset;
-    guint n_links;
-    RenderLink *links;
 } RenderInput;
 
 typedef struct {
@@ -61,9 +52,10 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
     Viewer *viewer, const ViewportLayout *layout, int page_idx);
 static void renderer_draw_highlights(cairo_t *cr, const ViewportRect *rect,
     double scale, double page_height, const SearchRect *rects, guint n_rects);
+static void renderer_draw_link_numbers(cairo_t *cr, Viewer *viewer);
 static void renderer_init(Renderer *renderer, GtkWidget *view);
 static void renderer_reset_page(RendererPageState *page_state);
-static void renderer_prefetch_page(Renderer *renderer, Viewer *viewer,
+static void renderer_request_page_for_layout(Renderer *renderer, Viewer *viewer,
     const ViewportLayout *layout, int page_idx);
 static void renderer_clear_surface_locked(RendererPageState *page_state);
 static void renderer_request_page(Renderer *renderer, ViewerInfo *info,
@@ -77,11 +69,9 @@ static void render_page_async(gpointer data, gpointer user_data);
 static void renderer_render_page(cairo_t *cr, ViewerInfo *info,
     PopplerPage *page, const RenderInput *input);
 static void draw_loading_page(cairo_t *cr, const ViewportRect *rect);
-static void viewer_draw_links(cairo_t *cr, const RenderInput *input);
 
 static RenderInput *render_input_new(Viewer *viewer,
-    const ViewportLayout *layout, int page_idx, guint link_offset,
-    guint n_links);
+    const ViewportLayout *layout, int page_idx);
 static RenderInput *render_input_copy(const RenderInput *input);
 static void render_input_free(RenderInput *input);
 static gboolean render_input_equal(const RenderInput *left,
@@ -149,7 +139,8 @@ void renderer_destroy(Renderer *renderer)
     g_free(renderer);
 }
 
-void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer)
+void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer,
+    gboolean link_numbers)
 {
     const ViewerCursor *mark = viewer_current_mark(viewer);
 
@@ -163,6 +154,10 @@ void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer)
     ViewportLayout layout = viewport_layout(viewer->viewport, mark);
     for (int i = layout.from; i <= layout.to; i++) {
         renderer_draw_page(renderer, cr, viewer, &layout, i);
+    }
+
+    if (link_numbers) {
+        renderer_draw_link_numbers(cr, viewer);
     }
 
     if (mark->dark_mode) {
@@ -196,38 +191,22 @@ void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
     renderer->last_requested_from = requested_from;
     renderer->last_requested_to = requested_to;
 
-    viewer_links_clear_links(viewer->links);
     for (int i = visible_from; i <= visible_to; i++) {
-        PopplerPage *page = viewer_info_get_poppler_page(viewer->info, i);
-        guint link_offset = viewer->links->visible_links->len;
-        guint n_links = 0;
-
-        if (viewer->links->follow_links_mode) {
-            viewer_info_lock(viewer->info);
-            n_links = viewer_links_get_links(viewer->links, page);
-            viewer_info_unlock(viewer->info);
-            g_assert(viewer->links->visible_links->len == link_offset + n_links);
-        }
-
-        RenderInput *input = render_input_new(viewer, &layout, i,
-            link_offset, n_links);
-        renderer_request_page(renderer, viewer->info,
-            &renderer->page_states[i], page, input);
+        renderer_request_page_for_layout(renderer, viewer, &layout, i);
     }
-
     for (int i = visible_to + 1; i <= requested_to; i++) {
-        renderer_prefetch_page(renderer, viewer, &layout, i);
+        renderer_request_page_for_layout(renderer, viewer, &layout, i);
     }
     for (int i = visible_from - 1; i >= requested_from; i--) {
-        renderer_prefetch_page(renderer, viewer, &layout, i);
+        renderer_request_page_for_layout(renderer, viewer, &layout, i);
     }
 }
 
-static void renderer_prefetch_page(Renderer *renderer, Viewer *viewer,
+static void renderer_request_page_for_layout(Renderer *renderer, Viewer *viewer,
     const ViewportLayout *layout, int page_idx)
 {
     PopplerPage *page = viewer_info_get_poppler_page(viewer->info, page_idx);
-    RenderInput *input = render_input_new(viewer, layout, page_idx, 0, 0);
+    RenderInput *input = render_input_new(viewer, layout, page_idx);
     renderer_request_page(renderer, viewer->info,
         &renderer->page_states[page_idx], page, input);
 }
@@ -290,6 +269,43 @@ static void renderer_draw_highlights(cairo_t *cr, const ViewportRect *rect,
         cairo_fill(cr);
     }
     cairo_restore(cr);
+}
+
+static void renderer_draw_link_numbers(cairo_t *cr, Viewer *viewer)
+{
+    GArray *numbers = viewer_link_numbers(viewer);
+    const ViewportSize view = viewport_get_view_size(viewer->viewport);
+
+    cairo_save(cr);
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
+        CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, LINK_NUMBER_FONT_SIZE);
+    cairo_set_line_width(cr, 2.0);
+
+    for (guint i = 0; i < numbers->len; i++) {
+        const ViewerLinkNumber *label = &g_array_index(numbers,
+            ViewerLinkNumber, i);
+        char text[16];
+        cairo_text_extents_t extents;
+
+        g_snprintf(text, sizeof(text), "%u", label->number);
+        cairo_text_extents(cr, text, &extents);
+
+        double x = MIN(label->area.x, view.width - extents.width);
+        double y = MIN(label->area.y, view.height - extents.height);
+        x = MAX(x, 0);
+        y = MAX(y, 0);
+
+        cairo_move_to(cr, x - extents.x_bearing, y - extents.y_bearing);
+        cairo_text_path(cr, text);
+        cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+        cairo_stroke_preserve(cr);
+        cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
+        cairo_fill(cr);
+    }
+
+    cairo_restore(cr);
+    g_array_unref(numbers);
 }
 
 static void renderer_reset_page(RendererPageState *page_state)
@@ -452,13 +468,10 @@ static void renderer_render_page(cairo_t *cr, ViewerInfo *info,
     viewer_info_lock(info);
     poppler_page_render(page, cr);
     viewer_info_unlock(info);
-
-    viewer_draw_links(cr, input);
 }
 
 static RenderInput *render_input_new(Viewer *viewer,
-    const ViewportLayout *layout, int page_idx, guint link_offset,
-    guint n_links)
+    const ViewportLayout *layout, int page_idx)
 {
     const ViewportSize page_size = viewport_get_page_size(viewer->viewport,
         page_idx);
@@ -467,22 +480,6 @@ static RenderInput *render_input_new(Viewer *viewer,
     input->scale = layout->scale;
     input->page_width = page_size.width;
     input->page_height = page_size.height;
-    input->link_offset = link_offset;
-    input->n_links = n_links;
-
-    if (n_links > 0) {
-        input->links = g_new0(RenderLink, n_links);
-        for (guint i = 0; i < n_links; i++) {
-            PopplerLinkMapping *mapping = g_ptr_array_index(
-                viewer->links->visible_links, link_offset + i);
-            input->links[i] = (RenderLink){
-                .x1 = mapping->area.x1,
-                .y1 = mapping->area.y1,
-                .x2 = mapping->area.x2,
-                .y2 = mapping->area.y2
-            };
-        }
-    }
 
     return input;
 }
@@ -500,24 +497,11 @@ static RenderInput *render_input_copy(const RenderInput *input)
         return NULL;
     }
 
-    RenderInput *copy = g_new0(RenderInput, 1);
-    *copy = *input;
-    copy->links = NULL;
-    if (input->n_links > 0) {
-        copy->links = g_memdup2(input->links,
-            sizeof(RenderLink) * input->n_links);
-    }
-
-    return copy;
+    return g_memdup2(input, sizeof(RenderInput));
 }
 
 static void render_input_free(RenderInput *input)
 {
-    if (input == NULL) {
-        return;
-    }
-
-    g_free(input->links);
     g_free(input);
 }
 
@@ -528,24 +512,9 @@ static gboolean render_input_equal(const RenderInput *left,
         return left == right;
     }
 
-    if (fabs(left->scale - right->scale) >= SCALE_EPSILON ||
-        left->page_width != right->page_width ||
-        left->page_height != right->page_height ||
-        left->link_offset != right->link_offset ||
-        left->n_links != right->n_links) {
-        return FALSE;
-    }
-
-    for (guint i = 0; i < left->n_links; i++) {
-        if (left->links[i].x1 != right->links[i].x1 ||
-            left->links[i].y1 != right->links[i].y1 ||
-            left->links[i].x2 != right->links[i].x2 ||
-            left->links[i].y2 != right->links[i].y2) {
-            return FALSE;
-        }
-    }
-
-    return TRUE;
+    return fabs(left->scale - right->scale) < SCALE_EPSILON &&
+        left->page_width == right->page_width &&
+        left->page_height == right->page_height;
 }
 
 static void renderer_ensure_page_states(Renderer *renderer, Viewer *viewer)
@@ -619,22 +588,4 @@ static void draw_loading_page(cairo_t *cr, const ViewportRect *rect)
         rect->y + (rect->height - extents.height) / 2 - extents.y_bearing);
     cairo_show_text(cr, "Loading...");
     cairo_restore(cr);
-}
-
-static void viewer_draw_links(cairo_t *cr, const RenderInput *input)
-{
-    for (guint i = 0; i < input->n_links; i++) {
-        const RenderLink *link = &input->links[i];
-        char *link_text = g_strdup_printf("%u", input->link_offset + i + 1);
-
-        cairo_move_to(cr, link->x1,
-            input->page_height - link->y1);
-        cairo_text_path(cr, link_text);
-        cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
-        cairo_set_line_width(cr, 2.0);
-        cairo_stroke_preserve(cr);
-        cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-        cairo_fill(cr);
-        g_free(link_text);
-    }
 }

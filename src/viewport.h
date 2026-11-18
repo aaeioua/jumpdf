@@ -47,6 +47,7 @@ void viewport_destroy(Viewport *viewport);
 
 /* The view size is 0x0 until set. Fitting is a no-op while it is empty. */
 void viewport_set_view_size(Viewport *viewport, double width, double height);
+ViewportSize viewport_get_view_size(const Viewport *viewport);
 
 ViewportSize viewport_get_page_size(const Viewport *viewport, int page);
 

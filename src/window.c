@@ -192,12 +192,10 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
         .tallied = window_on_search_tallied,
     };
     Search *search;
-    ViewerLinks *links;
     GFileInfo *file_info;
     double default_width, default_height;
 
     search = search_new(info, &search_callbacks, win);
-    links = viewer_links_new();
 
     win->uri = g_file_get_uri(file);
     win->mark_manager = mark_manager;
@@ -208,7 +206,7 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
         .scale_step = g_config->scale_step,
         .max_page_pixels = RENDERER_MAX_PAGE_PIXELS,
     };
-    win->viewer = viewer_new(info, win->selection, search, links, &rules);
+    win->viewer = viewer_new(info, win->selection, search, &rules);
     win->renderer = renderer_new(win->view);
 
     /* Marks from the Mark store may lie beyond a since-shortened document */
@@ -510,7 +508,8 @@ static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
         win->first_draw = FALSE;
     }
     
-    renderer_draw(win->renderer, cr, win->viewer);
+    renderer_draw(win->renderer, cr, win->viewer,
+        input_link_numbers_shown(win->input));
 }
 
 static void on_search_entry_activate(GtkEntry *entry, gpointer user_data) {

@@ -62,6 +62,14 @@ void viewport_set_view_size(Viewport *viewport, double width, double height)
     viewport->view_height = height;
 }
 
+ViewportSize viewport_get_view_size(const Viewport *viewport)
+{
+    return (ViewportSize){
+        .width = viewport->view_width,
+        .height = viewport->view_height
+    };
+}
+
 ViewportSize viewport_get_page_size(const Viewport *viewport, int page)
 {
     return viewport->page_sizes[clamp_page(viewport, page)];

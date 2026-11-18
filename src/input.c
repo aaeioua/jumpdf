@@ -204,6 +204,8 @@ struct Input {
     /* Digits in the Count the pending keys end in, if they end in one */
     guint open_digits;
     GString *pending;
+    /* The pending keys start COMMAND_FOLLOW_LINK */
+    gboolean link_numbers_shown;
     Command last;
     Command last_jump;
 };
@@ -219,7 +221,6 @@ static Token next_token(const char **cursor);
 static InputRequest run_binding(Input *input, Viewer *viewer,
     const Binding *binding, Command command);
 static InputRequest execute(Input *input, Viewer *viewer, Command command);
-static void follow_link(Viewer *viewer, unsigned int number);
 static void clear_pending(Input *input);
 static void update_pending_text(Input *input);
 static gboolean is_digit(guint keyval);
@@ -276,6 +277,11 @@ const char *input_pending(const Input *input)
     return input->pending->str;
 }
 
+gboolean input_link_numbers_shown(const Input *input)
+{
+    return input->link_numbers_shown;
+}
+
 GArray *input_help(void)
 {
     GArray *rows = g_array_sized_new(FALSE, FALSE, sizeof(InputHelpRow),
@@ -322,7 +328,7 @@ static InputRequest dispatch(Input *input, Viewer *viewer, guint keyval)
     g_assert(input->n_keys < MAX_SEQUENCE_KEYS);
     input->keys[input->n_keys++] = keyval;
     found = lookup(input);
-    viewer->links->follow_links_mode = found.following;
+    input->link_numbers_shown = found.following;
 
     if (found.complete != NULL) {
         clear_pending(input);
@@ -551,7 +557,7 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
         viewport_goto_page(viewport, mark, (int)command.count - 1);
         break;
     case COMMAND_FOLLOW_LINK:
-        follow_link(viewer, command.count);
+        viewer_follow_link(viewer, command.count);
         break;
     case COMMAND_SWITCH_MARK:
         group_selection_switch_mark(viewer->selection, command.index);
@@ -613,20 +619,6 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
     }
 
     return INPUT_REQUEST_NONE;
-}
-
-/* Links are numbered from 1; a number out of range does nothing */
-static void follow_link(Viewer *viewer, unsigned int number)
-{
-    GPtrArray *visible_links = viewer->links->visible_links;
-    PopplerLinkMapping *link_mapping;
-
-    if (number < 1 || number > visible_links->len) {
-        return;
-    }
-
-    link_mapping = g_ptr_array_index(visible_links, number - 1);
-    viewer_execute_action(viewer, link_mapping->action);
 }
 
 static void clear_pending(Input *input)
