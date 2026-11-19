@@ -74,7 +74,6 @@ struct _Window {
     GroupSelection *selection;
     Viewer *viewer;
     Renderer *renderer;
-    bool first_draw;
     Input *input;
 };
 
@@ -87,7 +86,6 @@ static void window_init(Window *win)
     win->selection = NULL;
     win->viewer = NULL;
     win->renderer = NULL;
-    win->first_draw = TRUE;
     win->input = input_new();
     win->outline_panel = NULL;
 
@@ -207,7 +205,7 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
         .max_page_pixels = RENDERER_MAX_PAGE_PIXELS,
     };
     win->viewer = viewer_new(info, win->selection, search, &rules);
-    win->renderer = renderer_new(win->view);
+    win->renderer = renderer_new(win->view, win->viewer);
 
     /* Marks from the Mark store may lie beyond a since-shortened document */
     for (unsigned int g = 0; g < NUM_GROUPS; g++) {
@@ -244,7 +242,6 @@ void window_redraw(Window *win)
 {
     gtk_widget_queue_draw(win->view);
     window_update_statusline(win);
-    renderer_render_visible_pages(win->renderer, win->viewer);
 }
 
 static void window_toggle_fullscreen(Window *win)
@@ -425,10 +422,7 @@ static void window_update_statusline(Window *win)
 
 static void window_on_search_changed(gpointer user_data)
 {
-    Window *win = user_data;
-
-    gtk_widget_queue_draw(win->view);
-    window_update_statusline(win);
+    window_redraw(user_data);
 }
 
 static void window_on_search_found(int from, int to, gpointer user_data)
@@ -502,14 +496,8 @@ static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,
     UNUSED(height);
 
     Window *win = (Window *)user_data;
-    
-    if (win->first_draw) {
-        renderer_render_visible_pages(win->renderer, win->viewer);
-        win->first_draw = FALSE;
-    }
-    
-    renderer_draw(win->renderer, cr, win->viewer,
-        input_link_numbers_shown(win->input));
+
+    renderer_draw(win->renderer, cr, input_link_numbers_shown(win->input));
 }
 
 static void on_search_entry_activate(GtkEntry *entry, gpointer user_data) {

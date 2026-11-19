@@ -1,29 +1,24 @@
 #include "renderer.h"
 
 #include <math.h>
-#include <string.h>
 
 #define SCALE_EPSILON 1e-6
 #define PREFETCH_PAGES 1
 #define LINK_NUMBER_FONT_SIZE 12
 
-typedef enum {
-    RENDERER_PAGE_NOT_RENDERED,
-    RENDERER_PAGE_RENDERING,
-    RENDERER_PAGE_RENDERED
-} RendererPageStatus;
-
-typedef struct {
-    double scale;
-    double page_width;
-    double page_height;
-} RenderInput;
-
+/*
+ * Guarded by `mutex`. A scale of 0 means none, since real scales are > 0.
+ * A render ending on a worker publishes its surface or failure.
+ */
 typedef struct {
     GMutex mutex;
-    RendererPageStatus status;
+    /* The last render published, at surface_scale; NULL if none */
     cairo_surface_t *surface;
-    RenderInput *desired_input;
+    double surface_scale;
+    /* 0 while the page is not wanted */
+    double wanted_scale;
+    double failed_scale;
+    /* Bumped when the page stops being wanted, to ignore running renders */
     guint64 generation;
     gboolean in_progress;
 } RendererPageState;
@@ -33,10 +28,13 @@ typedef struct {
     ViewerInfo *info;
     PopplerPage *poppler_page;
     guint64 generation;
-    RenderInput *input;
+    double scale;
+    /* Unscaled */
+    ViewportSize page_size;
 } RenderJob;
 
 struct Renderer {
+    Viewer *viewer;
     GWeakRef redraw_target;
     GThreadPool *render_pool;
     GMutex pool_mutex;
@@ -44,58 +42,55 @@ struct Renderer {
 
     RendererPageState *page_states;
     int page_count;
-    int last_requested_from;
-    int last_requested_to;
+    /* The pages the last draw wanted; -1 before the first */
+    int last_wanted_from;
+    int last_wanted_to;
 };
 
-static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
-    Viewer *viewer, const ViewportLayout *layout, int page_idx);
+static void renderer_want_pages(Renderer *renderer, int wanted_from,
+    int wanted_to, double scale);
+static void renderer_drop_page(RendererPageState *page_state);
+static gboolean renderer_draw_page(Renderer *renderer, cairo_t *cr,
+    const ViewportLayout *layout, int page_idx);
+static void draw_page_surface(cairo_t *cr, const ViewportRect *rect,
+    cairo_surface_t *surface, gboolean current);
 static void renderer_draw_highlights(cairo_t *cr, const ViewportRect *rect,
     double scale, double page_height, const SearchRect *rects, guint n_rects);
 static void renderer_draw_link_numbers(cairo_t *cr, Viewer *viewer);
-static void renderer_init(Renderer *renderer, GtkWidget *view);
-static void renderer_reset_page(RendererPageState *page_state);
-static void renderer_request_page_for_layout(Renderer *renderer, Viewer *viewer,
+static gboolean renderer_request_page_for_layout(Renderer *renderer,
     const ViewportLayout *layout, int page_idx);
-static void renderer_clear_surface_locked(RendererPageState *page_state);
-static void renderer_request_page(Renderer *renderer, ViewerInfo *info,
-    RendererPageState *page_state, PopplerPage *poppler_page,
-    RenderInput *input);
+static gboolean renderer_page_settled_locked(
+    const RendererPageState *page_state, double scale);
+static gboolean renderer_failed_at_locked(const RendererPageState *page_state,
+    double scale);
+static gboolean scales_equal(double left, double right);
 static RenderJob *renderer_create_job_locked(RendererPageState *page_state,
-    ViewerInfo *info, PopplerPage *poppler_page);
+    ViewerInfo *info, PopplerPage *poppler_page, ViewportSize page_size);
 static void render_job_free(RenderJob *job);
 static void renderer_push_job(Renderer *renderer, RenderJob *job);
 static void render_page_async(gpointer data, gpointer user_data);
-static void renderer_render_page(cairo_t *cr, ViewerInfo *info,
-    PopplerPage *page, const RenderInput *input);
-static void draw_loading_page(cairo_t *cr, const ViewportRect *rect);
-
-static RenderInput *render_input_new(Viewer *viewer,
-    const ViewportLayout *layout, int page_idx);
-static RenderInput *render_input_copy(const RenderInput *input);
-static void render_input_free(RenderInput *input);
-static gboolean render_input_equal(const RenderInput *left,
-    const RenderInput *right);
-static void renderer_ensure_page_states(Renderer *renderer, Viewer *viewer);
+static cairo_surface_t *renderer_render_page(const RenderJob *job);
+static void draw_loading_page(cairo_t *cr, const ViewportRect *rect,
+    const char *text);
 static void renderer_schedule_redraw(Renderer *renderer);
 static gboolean queue_redraw_on_main(gpointer data);
 static void weak_ref_free(gpointer data);
 
-Renderer *renderer_new(GtkWidget *view)
+Renderer *renderer_new(GtkWidget *view, Viewer *viewer)
 {
     Renderer *renderer = g_new0(Renderer, 1);
-    renderer_init(renderer, view);
-
-    return renderer;
-}
-
-void renderer_init(Renderer *renderer, GtkWidget *view)
-{
+    renderer->viewer = viewer;
     g_weak_ref_init(&renderer->redraw_target,
         view != NULL ? G_OBJECT(view) : NULL);
     g_mutex_init(&renderer->pool_mutex);
-    renderer->last_requested_from = -1;
-    renderer->last_requested_to = -1;
+    renderer->last_wanted_from = -1;
+    renderer->last_wanted_to = -1;
+
+    renderer->page_count = viewer->info->n_pages;
+    renderer->page_states = g_new0(RendererPageState, renderer->page_count);
+    for (int i = 0; i < renderer->page_count; i++) {
+        g_mutex_init(&renderer->page_states[i].mutex);
+    }
 
     GError *error = NULL;
     renderer->render_pool = g_thread_pool_new(render_page_async, renderer,
@@ -105,6 +100,8 @@ void renderer_init(Renderer *renderer, GtkWidget *view)
         g_error_free(error);
         renderer->render_pool = NULL;
     }
+
+    return renderer;
 }
 
 void renderer_destroy(Renderer *renderer)
@@ -126,10 +123,7 @@ void renderer_destroy(Renderer *renderer)
 
     for (int i = 0; i < renderer->page_count; i++) {
         RendererPageState *page_state = &renderer->page_states[i];
-        if (page_state->surface != NULL) {
-            cairo_surface_destroy(page_state->surface);
-        }
-        render_input_free(page_state->desired_input);
+        g_clear_pointer(&page_state->surface, cairo_surface_destroy);
         g_mutex_clear(&page_state->mutex);
     }
     g_free(renderer->page_states);
@@ -139,21 +133,25 @@ void renderer_destroy(Renderer *renderer)
     g_free(renderer);
 }
 
-void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer,
-    gboolean link_numbers)
+gboolean renderer_draw(Renderer *renderer, cairo_t *cr, gboolean link_numbers)
 {
+    Viewer *viewer = renderer->viewer;
     const ViewerCursor *mark = viewer_current_mark(viewer);
+    const ViewportLayout layout = viewport_layout(viewer->viewport, mark);
+    const int wanted_from = MAX(0, layout.from - PREFETCH_PAGES);
+    const int wanted_to = MIN(renderer->page_count - 1,
+        layout.to + PREFETCH_PAGES);
+    gboolean settled = TRUE;
 
-    renderer_ensure_page_states(renderer, viewer);
+    renderer_want_pages(renderer, wanted_from, wanted_to, layout.scale);
 
     if (mark->dark_mode) {
         cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
         cairo_paint(cr);
     }
 
-    ViewportLayout layout = viewport_layout(viewer->viewport, mark);
     for (int i = layout.from; i <= layout.to; i++) {
-        renderer_draw_page(renderer, cr, viewer, &layout, i);
+        settled &= renderer_draw_page(renderer, cr, &layout, i);
     }
 
     if (link_numbers) {
@@ -165,55 +163,62 @@ void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer,
         cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
         cairo_paint(cr);
     }
+
+    for (int i = layout.from; i <= layout.to; i++) {
+        settled &= renderer_request_page_for_layout(renderer, &layout, i);
+    }
+    for (int i = layout.to + 1; i <= wanted_to; i++) {
+        settled &= renderer_request_page_for_layout(renderer, &layout, i);
+    }
+    for (int i = layout.from - 1; i >= wanted_from; i--) {
+        settled &= renderer_request_page_for_layout(renderer, &layout, i);
+    }
+
+    return settled;
 }
 
-void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer)
+/*
+ * Drops the pages the last draw wanted that this one doesn't, and makes
+ * each page in [wanted_from, wanted_to] want `scale`
+ */
+static void renderer_want_pages(Renderer *renderer, int wanted_from,
+    int wanted_to, double scale)
 {
-    renderer_ensure_page_states(renderer, viewer);
-
-    ViewportLayout layout = viewport_layout(viewer->viewport,
-        viewer_current_mark(viewer));
-    const int visible_from = layout.from;
-    const int visible_to = layout.to;
-    const int requested_from = MAX(0, visible_from - PREFETCH_PAGES);
-    const int requested_to = MIN(renderer->page_count - 1,
-        visible_to + PREFETCH_PAGES);
-
-    if (renderer->last_requested_from >= 0) {
-        for (int i = renderer->last_requested_from;
-             i <= renderer->last_requested_to; i++) {
-            if (i < requested_from || i > requested_to) {
-                renderer_reset_page(&renderer->page_states[i]);
+    if (renderer->last_wanted_from >= 0) {
+        for (int i = renderer->last_wanted_from;
+             i <= renderer->last_wanted_to; i++) {
+            if (i < wanted_from || i > wanted_to) {
+                renderer_drop_page(&renderer->page_states[i]);
             }
         }
     }
+    renderer->last_wanted_from = wanted_from;
+    renderer->last_wanted_to = wanted_to;
 
-    renderer->last_requested_from = requested_from;
-    renderer->last_requested_to = requested_to;
-
-    for (int i = visible_from; i <= visible_to; i++) {
-        renderer_request_page_for_layout(renderer, viewer, &layout, i);
-    }
-    for (int i = visible_to + 1; i <= requested_to; i++) {
-        renderer_request_page_for_layout(renderer, viewer, &layout, i);
-    }
-    for (int i = visible_from - 1; i >= requested_from; i--) {
-        renderer_request_page_for_layout(renderer, viewer, &layout, i);
+    for (int i = wanted_from; i <= wanted_to; i++) {
+        RendererPageState *page_state = &renderer->page_states[i];
+        g_mutex_lock(&page_state->mutex);
+        page_state->wanted_scale = scale;
+        g_mutex_unlock(&page_state->mutex);
     }
 }
 
-static void renderer_request_page_for_layout(Renderer *renderer, Viewer *viewer,
+static void renderer_drop_page(RendererPageState *page_state)
+{
+    g_mutex_lock(&page_state->mutex);
+    page_state->generation++;
+    page_state->wanted_scale = 0;
+    page_state->failed_scale = 0;
+    g_clear_pointer(&page_state->surface, cairo_surface_destroy);
+    page_state->surface_scale = 0;
+    g_mutex_unlock(&page_state->mutex);
+}
+
+/* Paints the page and returns whether it was settled when painted */
+static gboolean renderer_draw_page(Renderer *renderer, cairo_t *cr,
     const ViewportLayout *layout, int page_idx)
 {
-    PopplerPage *page = viewer_info_get_poppler_page(viewer->info, page_idx);
-    RenderInput *input = render_input_new(viewer, layout, page_idx);
-    renderer_request_page(renderer, viewer->info,
-        &renderer->page_states[page_idx], page, input);
-}
-
-static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
-    Viewer *viewer, const ViewportLayout *layout, int page_idx)
-{
+    Viewer *viewer = renderer->viewer;
     const ViewportRect rect = viewport_layout_page_rect(viewer->viewport,
         layout, page_idx);
 
@@ -224,16 +229,19 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
 
     RendererPageState *page_state = &renderer->page_states[page_idx];
     g_mutex_lock(&page_state->mutex);
-    const gboolean is_cached = page_state->status == RENDERER_PAGE_RENDERED &&
-        page_state->surface != NULL;
-    if (is_cached) {
-        cairo_set_source_surface(cr, page_state->surface, rect.x, rect.y);
-        cairo_paint(cr);
+    const gboolean has_surface = page_state->surface != NULL;
+    const gboolean failed = renderer_failed_at_locked(page_state,
+        layout->scale);
+    const gboolean settled = renderer_page_settled_locked(page_state,
+        layout->scale);
+    if (has_surface) {
+        draw_page_surface(cr, &rect, page_state->surface,
+            scales_equal(page_state->surface_scale, layout->scale));
     }
     g_mutex_unlock(&page_state->mutex);
 
-    if (!is_cached) {
-        draw_loading_page(cr, &rect);
+    if (!has_surface) {
+        draw_loading_page(cr, &rect, failed ? "Can't render" : "Loading...");
     } else if (scanned) {
         renderer_draw_highlights(cr, &rect, layout->scale,
             viewport_get_page_size(viewer->viewport, page_idx).height,
@@ -250,6 +258,33 @@ static void renderer_draw_page(Renderer *renderer, cairo_t *cr,
         cairo_stroke(cr);
         cairo_restore(cr);
     }
+
+    return settled;
+}
+
+/*
+ * A `current` surface was rendered at the layout's scale; any other is
+ * scaled to fill `rect`
+ */
+static void draw_page_surface(cairo_t *cr, const ViewportRect *rect,
+    cairo_surface_t *surface, gboolean current)
+{
+    if (current) {
+        cairo_set_source_surface(cr, surface, rect->x, rect->y);
+        cairo_paint(cr);
+        return;
+    }
+
+    cairo_save(cr);
+    cairo_rectangle(cr, rect->x, rect->y, rect->width, rect->height);
+    cairo_clip(cr);
+    cairo_translate(cr, rect->x, rect->y);
+    cairo_scale(cr, rect->width / cairo_image_surface_get_width(surface),
+        rect->height / cairo_image_surface_get_height(surface));
+    cairo_set_source_surface(cr, surface, 0, 0);
+    cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
+    cairo_paint(cr);
+    cairo_restore(cr);
 }
 
 static void renderer_draw_highlights(cairo_t *cr, const ViewportRect *rect,
@@ -308,66 +343,69 @@ static void renderer_draw_link_numbers(cairo_t *cr, Viewer *viewer)
     g_array_unref(numbers);
 }
 
-static void renderer_reset_page(RendererPageState *page_state)
+/*
+ * Requests a render of a wanted page that needs one and returns whether
+ * the page was settled
+ */
+static gboolean renderer_request_page_for_layout(Renderer *renderer,
+    const ViewportLayout *layout, int page_idx)
 {
-    g_mutex_lock(&page_state->mutex);
-    page_state->generation++;
-    render_input_free(page_state->desired_input);
-    page_state->desired_input = NULL;
-    renderer_clear_surface_locked(page_state);
-    g_mutex_unlock(&page_state->mutex);
-}
-
-static void renderer_clear_surface_locked(RendererPageState *page_state)
-{
-    if (page_state->surface != NULL) {
-        cairo_surface_destroy(page_state->surface);
-        page_state->surface = NULL;
-    }
-    page_state->status = RENDERER_PAGE_NOT_RENDERED;
-}
-
-static void renderer_request_page(Renderer *renderer, ViewerInfo *info,
-    RendererPageState *page_state, PopplerPage *poppler_page,
-    RenderInput *input)
-{
+    Viewer *viewer = renderer->viewer;
+    RendererPageState *page_state = &renderer->page_states[page_idx];
     RenderJob *job = NULL;
 
     g_mutex_lock(&page_state->mutex);
-
-    if (!render_input_equal(page_state->desired_input, input)) {
-        render_input_free(page_state->desired_input);
-        page_state->desired_input = input;
-        input = NULL;
-        page_state->generation++;
-        renderer_clear_surface_locked(page_state);
+    const gboolean settled = renderer_page_settled_locked(page_state,
+        layout->scale);
+    if (!settled && !page_state->in_progress) {
+        job = renderer_create_job_locked(page_state, viewer->info,
+            viewer_info_get_poppler_page(viewer->info, page_idx),
+            viewport_get_page_size(viewer->viewport, page_idx));
     }
-    render_input_free(input);
-
-    if (!page_state->in_progress &&
-        page_state->status != RENDERER_PAGE_RENDERED &&
-        page_state->desired_input != NULL) {
-        page_state->status = RENDERER_PAGE_RENDERING;
-        job = renderer_create_job_locked(page_state, info, poppler_page);
-    }
-
     g_mutex_unlock(&page_state->mutex);
 
     if (job != NULL) {
         renderer_push_job(renderer, job);
     }
+
+    return settled;
 }
 
+/* Rendered at `scale`, or failed at it: no render at `scale` is needed */
+static gboolean renderer_page_settled_locked(
+    const RendererPageState *page_state, double scale)
+{
+    return (page_state->surface != NULL &&
+        scales_equal(page_state->surface_scale, scale)) ||
+        renderer_failed_at_locked(page_state, scale);
+}
+
+static gboolean renderer_failed_at_locked(const RendererPageState *page_state,
+    double scale)
+{
+    return page_state->failed_scale > 0 &&
+        scales_equal(page_state->failed_scale, scale);
+}
+
+static gboolean scales_equal(double left, double right)
+{
+    return fabs(left - right) < SCALE_EPSILON;
+}
+
+/* A render of the page at the scale it wants; marks the render running */
 static RenderJob *renderer_create_job_locked(RendererPageState *page_state,
-    ViewerInfo *info, PopplerPage *poppler_page)
+    ViewerInfo *info, PopplerPage *poppler_page, ViewportSize page_size)
 {
     RenderJob *job = g_new0(RenderJob, 1);
+
     job->page_state = page_state;
     job->info = info;
     job->poppler_page = g_object_ref(poppler_page);
     job->generation = page_state->generation;
-    job->input = render_input_copy(page_state->desired_input);
+    job->scale = page_state->wanted_scale;
+    job->page_size = page_size;
     page_state->in_progress = TRUE;
+
     return job;
 }
 
@@ -380,10 +418,7 @@ static void renderer_push_job(Renderer *renderer, RenderJob *job)
     if (g_atomic_int_get(&renderer->shutting_down)) {
         g_mutex_unlock(&renderer->pool_mutex);
         g_mutex_lock(&job->page_state->mutex);
-        if (job->page_state->generation == job->generation) {
-            job->page_state->in_progress = FALSE;
-            job->page_state->status = RENDERER_PAGE_NOT_RENDERED;
-        }
+        job->page_state->in_progress = FALSE;
         g_mutex_unlock(&job->page_state->mutex);
         render_job_free(job);
         return;
@@ -409,45 +444,36 @@ static void render_page_async(gpointer data, gpointer user_data)
     RenderJob *job = data;
     Renderer *renderer = user_data;
     RendererPageState *page_state = job->page_state;
-    const RenderInput *input = job->input;
 
-    int scaled_width = MAX(1, (int)(input->scale * input->page_width));
-    int scaled_height = MAX(1, (int)(input->scale * input->page_height));
-    cairo_surface_t *page_surface = cairo_image_surface_create(
-        CAIRO_FORMAT_ARGB32, scaled_width, scaled_height);
-    cairo_t *cr = cairo_create(page_surface);
-    cairo_scale(cr, input->scale, input->scale);
-    renderer_render_page(cr, job->info, job->poppler_page, input);
-    cairo_destroy(cr);
-    cairo_surface_flush(page_surface);
+    cairo_surface_t *page_surface = renderer_render_page(job);
 
-    gboolean published = FALSE;
+    gboolean changed = FALSE;
     RenderJob *retry_job = NULL;
     g_mutex_lock(&page_state->mutex);
     page_state->in_progress = FALSE;
-    if (page_state->generation == job->generation) {
-        if (page_state->surface != NULL) {
-            cairo_surface_destroy(page_state->surface);
+    if (page_state->generation == job->generation &&
+        scales_equal(page_state->wanted_scale, job->scale)) {
+        if (page_surface != NULL) {
+            g_clear_pointer(&page_state->surface, cairo_surface_destroy);
+            page_state->surface = g_steal_pointer(&page_surface);
+            page_state->surface_scale = job->scale;
+        } else {
+            page_state->failed_scale = job->scale;
         }
-        page_state->surface = page_surface;
-        page_surface = NULL;
-        page_state->status = RENDERER_PAGE_RENDERED;
-        published = TRUE;
-    } else {
-        page_state->status = RENDERER_PAGE_NOT_RENDERED;
-        if (!g_atomic_int_get(&renderer->shutting_down) &&
-            page_state->desired_input != NULL) {
-            retry_job = renderer_create_job_locked(page_state, job->info,
-                job->poppler_page);
-            page_state->status = RENDERER_PAGE_RENDERING;
-        }
+        changed = TRUE;
+    } else if (!g_atomic_int_get(&renderer->shutting_down) &&
+        page_state->wanted_scale > 0 &&
+        !renderer_page_settled_locked(page_state, page_state->wanted_scale)) {
+        /* Its draw skipped the page while this render ran */
+        retry_job = renderer_create_job_locked(page_state, job->info,
+            job->poppler_page, job->page_size);
     }
     g_mutex_unlock(&page_state->mutex);
 
     if (page_surface != NULL) {
         cairo_surface_destroy(page_surface);
     }
-    if (published) {
+    if (changed) {
         renderer_schedule_redraw(renderer);
     }
 
@@ -458,77 +484,41 @@ static void render_page_async(gpointer data, gpointer user_data)
     }
 }
 
-static void renderer_render_page(cairo_t *cr, ViewerInfo *info,
-    PopplerPage *page, const RenderInput *input)
+/* NULL if the surface fails to render */
+static cairo_surface_t *renderer_render_page(const RenderJob *job)
 {
-    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-    cairo_rectangle(cr, 0, 0, input->page_width, input->page_height);
-    cairo_fill(cr);
+    const int width = MAX(1, (int)(job->scale * job->page_size.width));
+    const int height = MAX(1, (int)(job->scale * job->page_size.height));
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+        width, height);
 
-    viewer_info_lock(info);
-    poppler_page_render(page, cr);
-    viewer_info_unlock(info);
-}
+    if (cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
+        cairo_t *cr = cairo_create(surface);
+        cairo_scale(cr, job->scale, job->scale);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_rectangle(cr, 0, 0, job->page_size.width,
+            job->page_size.height);
+        cairo_fill(cr);
 
-static RenderInput *render_input_new(Viewer *viewer,
-    const ViewportLayout *layout, int page_idx)
-{
-    const ViewportSize page_size = viewport_get_page_size(viewer->viewport,
-        page_idx);
+        viewer_info_lock(job->info);
+        poppler_page_render(job->poppler_page, cr);
+        viewer_info_unlock(job->info);
+        cairo_destroy(cr);
+        cairo_surface_flush(surface);
+    }
 
-    RenderInput *input = g_new0(RenderInput, 1);
-    input->scale = layout->scale;
-    input->page_width = page_size.width;
-    input->page_height = page_size.height;
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surface);
+        return NULL;
+    }
 
-    return input;
+    return surface;
 }
 
 static void render_job_free(RenderJob *job)
 {
     g_object_unref(job->poppler_page);
-    render_input_free(job->input);
     g_free(job);
-}
-
-static RenderInput *render_input_copy(const RenderInput *input)
-{
-    if (input == NULL) {
-        return NULL;
-    }
-
-    return g_memdup2(input, sizeof(RenderInput));
-}
-
-static void render_input_free(RenderInput *input)
-{
-    g_free(input);
-}
-
-static gboolean render_input_equal(const RenderInput *left,
-    const RenderInput *right)
-{
-    if (left == NULL || right == NULL) {
-        return left == right;
-    }
-
-    return fabs(left->scale - right->scale) < SCALE_EPSILON &&
-        left->page_width == right->page_width &&
-        left->page_height == right->page_height;
-}
-
-static void renderer_ensure_page_states(Renderer *renderer, Viewer *viewer)
-{
-    if (renderer->page_states == NULL) {
-        renderer->page_count = viewer->info->n_pages;
-        renderer->page_states = g_new0(RendererPageState,
-            renderer->page_count);
-        for (int i = 0; i < renderer->page_count; i++) {
-            g_mutex_init(&renderer->page_states[i].mutex);
-            renderer->page_states[i].status = RENDERER_PAGE_NOT_RENDERED;
-        }
-        return;
-    }
 }
 
 static void renderer_schedule_redraw(Renderer *renderer)
@@ -568,7 +558,8 @@ static void weak_ref_free(gpointer data)
     g_free(target_ref);
 }
 
-static void draw_loading_page(cairo_t *cr, const ViewportRect *rect)
+static void draw_loading_page(cairo_t *cr, const ViewportRect *rect,
+    const char *text)
 {
     cairo_save(cr);
     cairo_rectangle(cr, rect->x, rect->y, rect->width, rect->height);
@@ -582,10 +573,10 @@ static void draw_loading_page(cairo_t *cr, const ViewportRect *rect)
     cairo_set_font_size(cr, 32);
 
     cairo_text_extents_t extents;
-    cairo_text_extents(cr, "Loading...", &extents);
+    cairo_text_extents(cr, text, &extents);
     cairo_move_to(cr,
         rect->x + (rect->width - extents.width) / 2 - extents.x_bearing,
         rect->y + (rect->height - extents.height) / 2 - extents.y_bearing);
-    cairo_show_text(cr, "Loading...");
+    cairo_show_text(cr, text);
     cairo_restore(cr);
 }

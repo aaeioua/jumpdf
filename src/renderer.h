@@ -9,9 +9,21 @@
 
 typedef struct Renderer Renderer;
 
-Renderer *renderer_new(GtkWidget *view);
+/*
+ * Draws `viewer`'s current Mark. Borrows `viewer`, which must outlive
+ * it. Queues a draw of `view` when a render ends. `view` may be NULL.
+ */
+Renderer *renderer_new(GtkWidget *view, Viewer *viewer);
+/* Waits for running renders to end */
 void renderer_destroy(Renderer *renderer);
 
-void renderer_draw(Renderer *renderer, cairo_t *cr, Viewer *viewer,
-    gboolean link_numbers);
-void renderer_render_visible_pages(Renderer *renderer, Viewer *viewer);
+/*
+ * Paints the frame for the current Mark, then requests renders of the pages
+ * in view and pages that have no surface at the current scale.
+ * Until its render arrives, a page shows its last surface scaled or a
+ * placeholder. With `link_numbers`, paints the Link numbers over the frame.
+ * Returns TRUE when rendering has settled: each of those pages had a surface
+ * at the current scale, or had failed to render it, so this draw
+ * requested nothing.
+ */
+gboolean renderer_draw(Renderer *renderer, cairo_t *cr, gboolean link_numbers);
