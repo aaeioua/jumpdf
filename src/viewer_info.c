@@ -1,50 +1,43 @@
+#include <errno.h>
 #include <stdlib.h>
 
 #include "viewer_info.h"
 
+static ViewerInfo *viewer_info_open(PopplerDocument *doc, GError **error);
 static ViewerTarget viewer_info_resolve_explicit(const ViewerInfo *info,
     const PopplerDest *dest);
 
 ViewerInfo *viewer_info_new(PopplerDocument *doc)
 {
-    ViewerInfo *info = malloc(sizeof(ViewerInfo));
-    if (info == NULL) {
-        return NULL;
-    }
+    GError *error = NULL;
+    ViewerInfo *info = viewer_info_open(doc, &error);
 
-    if (!viewer_info_init(info, doc)) {
-        /* On failure the caller keeps ownership of doc */
-        info->doc = NULL;
-        viewer_info_destroy(info);
-        free(info);
-        return NULL;
+    if (info == NULL) {
+        g_printerr("%s\n", error->message);
+        g_error_free(error);
     }
 
     return info;
 }
 
-ViewerInfo *viewer_info_new_from_gfile(GFile *file)
+ViewerInfo *viewer_info_new_from_bytes(GBytes *bytes, GError **error)
 {
+    PopplerDocument *doc = poppler_document_new_from_bytes(bytes, NULL, error);
     ViewerInfo *info;
-    GError *error = NULL;
-    PopplerDocument *doc = poppler_document_new_from_gfile(file, NULL, NULL, &error);
 
-    if (error) {
-        g_printerr("Error opening document: %s\n", error->message);
-        g_error_free(error);
+    if (doc == NULL) {
         return NULL;
     }
 
-    info = viewer_info_new(doc);
+    info = viewer_info_open(doc, error);
     if (info == NULL) {
         g_object_unref(doc);
-        return NULL;
     }
 
     return info;
 }
 
-bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc)
+bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc, GError **error)
 {
     info->doc = doc;
     info->n_pages = 0;
@@ -53,19 +46,23 @@ bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc)
 
     const int n_pages = poppler_document_get_n_pages(doc);
     if (n_pages <= 0) {
-        g_printerr("Document has no pages\n");
+        g_set_error_literal(error, POPPLER_ERROR, POPPLER_ERROR_INVALID,
+            "Document has no pages");
         return false;
     }
 
     info->pages = calloc(n_pages, sizeof(PopplerPage *));
     if (info->pages == NULL) {
+        g_set_error_literal(error, G_FILE_ERROR, G_FILE_ERROR_NOMEM,
+            g_strerror(ENOMEM));
         return false;
     }
 
     for (int i = 0; i < n_pages; i++) {
         PopplerPage *page = poppler_document_get_page(doc, i);
         if (page == NULL) {
-            g_printerr("Could not open %i'th page of document\n", i);
+            g_set_error(error, POPPLER_ERROR, POPPLER_ERROR_DAMAGED,
+                "Could not open %i'th page of document", i);
             return false;
         }
 
@@ -163,4 +160,23 @@ static ViewerTarget viewer_info_resolve_explicit(const ViewerInfo *info,
         .has_top = dest->change_top != 0,
         .top = dest->top,
     };
+}
+
+static ViewerInfo *viewer_info_open(PopplerDocument *doc, GError **error)
+{
+    ViewerInfo *info = malloc(sizeof(ViewerInfo));
+    if (info == NULL) {
+        g_set_error_literal(error, G_FILE_ERROR, G_FILE_ERROR_NOMEM,
+            g_strerror(ENOMEM));
+        return NULL;
+    }
+
+    if (!viewer_info_init(info, doc, error)) {
+        info->doc = NULL;
+        viewer_info_destroy(info);
+        free(info);
+        return NULL;
+    }
+
+    return info;
 }

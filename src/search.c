@@ -70,6 +70,8 @@ struct Search {
     GPtrArray *results;
 };
 
+static void search_start_query(Search *search, const char *query,
+    int from_page, gboolean seek);
 static gpointer search_worker(gpointer data);
 static int search_next_page_locked(Search *search);
 static PopplerFindFlags search_find_flags(const char *query);
@@ -157,6 +159,17 @@ void search_free(Search *search)
 
 void search_set_query(Search *search, const char *query, int from_page)
 {
+    search_start_query(search, query, from_page, TRUE);
+}
+
+void search_restore_query(Search *search, const char *query, int from_page)
+{
+    search_start_query(search, query, from_page, FALSE);
+}
+
+static void search_start_query(Search *search, const char *query,
+    int from_page, gboolean seek)
+{
     from_page = search_clamp_page(search, from_page);
 
     search_clear_pages(search);
@@ -167,7 +180,7 @@ void search_set_query(Search *search, const char *query, int from_page)
     search->query = query != NULL && query[0] != '\0' ? g_strdup(query) : NULL;
     search->generation++;
     search->seek = (SearchSeek){
-        .active = search->query != NULL,
+        .active = seek && search->query != NULL,
         .from = from_page,
         .total = 1,
         .counts_from = TRUE,

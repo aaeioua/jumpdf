@@ -18,3 +18,5 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
 void window_redraw(Window *win);
 
 ViewerMarkManager *window_get_mark_manager(Window *win);
+const char *window_get_uri(Window *win);
+void window_reload(Window *win, GBytes *bytes);

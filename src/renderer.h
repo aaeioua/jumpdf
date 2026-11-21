@@ -16,6 +16,8 @@ typedef struct Renderer Renderer;
 Renderer *renderer_new(GtkWidget *view, Viewer *viewer);
 /* Waits for running renders to end */
 void renderer_destroy(Renderer *renderer);
+/* Moves `from`'s surfaces to `to` for a new version of the document */
+void renderer_take_surfaces(Renderer *to, Renderer *from);
 
 /*
  * Paints the frame for the current Mark, then requests renders of the pages

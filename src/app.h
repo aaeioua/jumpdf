@@ -21,4 +21,5 @@ void app_remove_window(App *app, Window *win);
 /* Redraws every window whose Group selection belongs to `manager` */
 void app_redraw_windows(App *app, ViewerMarkManager *manager);
 void app_save_document(App *app, const char *uri);
+void app_reload_document(App *app, const char *uri);
 void app_open_file_chooser(App *app);

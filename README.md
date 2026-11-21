@@ -116,6 +116,7 @@ jumpdf <pdf_file1> <pdf_file2> ...
 - <kbd>,</kbd> (Repeat last jump command (switch to previous mark or group))
 - <kbd>/</kbd>, <kbd>Esc</kbd> (Show/hide search dialog. <kbd>Enter</kbd> goes to the first page from the current one that contains the text)
 - <kbd>o</kbd> (Open file chooser)
+- <kbd>R</kbd> (Reload the document)
 - <kbd>Tab</kbd> (Toggle table of contents)
   - <kbd>j</kbd>, <kbd>k</kbd> (Move down, up)
   - <kbd>/</kbd>, <kbd>Esc</kbd> (Focus/unfocus search entry)

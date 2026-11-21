@@ -9,6 +9,7 @@ typedef struct Config {
     int steps;
     double min_scale;
     double scale_step;
+    gboolean auto_reload;
 
     StatuslineLayout statusline;
 } Config;

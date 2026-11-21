@@ -8,6 +8,7 @@
 #define DEFAULT_STEPS 15 // Number of steps in a page.
 #define DEFAULT_MIN_SCALE 0.3 // To prevent divide by zero
 #define DEFAULT_SCALE_STEP 0.1 // How much to scale the PDF on each event
+#define DEFAULT_AUTO_RELOAD FALSE // Reload a document when its file changes
 #define DEFAULT_STATUSLINE_SEPARATOR " | "
 
 Config *g_config = NULL;
@@ -18,6 +19,8 @@ static gchar *settings_string(const toml_table_t *settings, const char *key,
     const char *fallback);
 static int settings_int(const toml_table_t *settings, const char *key,
     int fallback);
+static gboolean settings_bool(const toml_table_t *settings, const char *key,
+    gboolean fallback);
 static double settings_double(const toml_table_t *settings, const char *key,
     double fallback);
 static void settings_statusline_section(const toml_table_t *settings,
@@ -54,6 +57,7 @@ void config_init(Config *config)
     config->steps = -1;
     config->min_scale = -1.0;
     config->scale_step = -1.0;
+    config->auto_reload = DEFAULT_AUTO_RELOAD;
 
     statusline_layout_init(&config->statusline);
 }
@@ -132,6 +136,7 @@ void config_load_default(Config *config)
     config_set_steps(config, DEFAULT_STEPS);
     config_set_min_scale(config, DEFAULT_MIN_SCALE);
     config_set_scale_step(config, DEFAULT_SCALE_STEP);
+    config->auto_reload = DEFAULT_AUTO_RELOAD;
     config_set_statusline_separator(config, g_strdup(DEFAULT_STATUSLINE_SEPARATOR));
 
     for (guint i = 0; i < G_N_ELEMENTS(statusline_section_keys); i++) {
@@ -175,6 +180,8 @@ static void config_parse_settings(Config *config, const toml_table_t *settings)
         settings_double(settings, "min_scale", DEFAULT_MIN_SCALE));
     config_set_scale_step(config,
         settings_double(settings, "scale_step", DEFAULT_SCALE_STEP));
+    config->auto_reload = settings_bool(settings, "auto_reload",
+        DEFAULT_AUTO_RELOAD);
     config_set_statusline_separator(config,
         settings_string(settings, "statusline_separator",
             DEFAULT_STATUSLINE_SEPARATOR));
@@ -223,6 +230,24 @@ static int settings_int(const toml_table_t *settings, const char *key,
     }
 
     return datum.u.i;
+}
+
+static gboolean settings_bool(const toml_table_t *settings, const char *key,
+    gboolean fallback)
+{
+    toml_datum_t datum;
+
+    if (!toml_key_exists(settings, key)) {
+        return fallback;
+    }
+
+    datum = toml_bool_in(settings, key);
+    if (!datum.ok) {
+        g_printerr("Error parsing \"%s\". Using default value.\n", key);
+        return fallback;
+    }
+
+    return datum.u.b ? TRUE : FALSE;
 }
 
 static double settings_double(const toml_table_t *settings, const char *key,

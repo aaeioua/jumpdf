@@ -3,6 +3,7 @@ file_chooser_initial_folder_path = "~/Documents"
 steps = 15
 min_scale = 0.3
 scale_step = 0.1
+auto_reload = false
 
 # Possible components: ["Page", "Center mode", "Scale", "Mark selection", "Pending keys", "Search"]
 statusline_separator = " | "

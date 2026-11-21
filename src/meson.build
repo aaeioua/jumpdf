@@ -15,6 +15,7 @@ sources = [
     'renderer.c',
     'input.c',
     'viewer_info.c',
+    'document.c',
     'viewer_cursor.c',
     'viewport.c',
     'search.c',

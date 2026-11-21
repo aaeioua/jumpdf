@@ -29,6 +29,15 @@ static void window_update_statusline(Window *win);
 static void window_on_search_changed(gpointer user_data);
 static void window_on_search_found(int from, int to, gpointer user_data);
 static void window_on_search_tallied(gpointer user_data);
+static ViewportRules window_viewport_rules(void);
+static void settle_marks(ViewerMarkManager *mark_manager,
+    const Viewport *viewport);
+
+static const SearchCallbacks search_callbacks = {
+    .changed = window_on_search_changed,
+    .found = window_on_search_found,
+    .tallied = window_on_search_tallied,
+};
 
 static gboolean on_key_pressed(GtkWidget *user_data, guint keyval,
                                guint keycode, GdkModifierType state,
@@ -159,10 +168,11 @@ static void window_finalize(GObject *object)
 
     if (win->uri != NULL) {
         app_save_document(win->app, win->uri);
-        g_clear_pointer(&win->uri, g_free);
     }
 
+    /* URI freed last since it indicates a document is in use. */
     app_remove_window(win->app, win);
+    g_clear_pointer(&win->uri, g_free);
 
     G_OBJECT_CLASS(window_parent_class)->finalize(object);
 }
@@ -184,38 +194,20 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     ViewerInfo *info)
 {
     GError *error = NULL;
-    const SearchCallbacks search_callbacks = {
-        .changed = window_on_search_changed,
-        .found = window_on_search_found,
-        .tallied = window_on_search_tallied,
-    };
     Search *search;
     GFileInfo *file_info;
     double default_width, default_height;
+    const ViewportRules rules = window_viewport_rules();
 
     search = search_new(info, &search_callbacks, win);
 
     win->uri = g_file_get_uri(file);
     win->mark_manager = mark_manager;
     win->selection = viewer_mark_manager_attach(mark_manager);
-    const ViewportRules rules = {
-        .steps = g_config->steps,
-        .min_scale = g_config->min_scale,
-        .scale_step = g_config->scale_step,
-        .max_page_pixels = RENDERER_MAX_PAGE_PIXELS,
-    };
     win->viewer = viewer_new(info, win->selection, search, &rules);
     win->renderer = renderer_new(win->view, win->viewer);
 
-    /* Marks from the Mark store may lie beyond a since-shortened document */
-    for (unsigned int g = 0; g < NUM_GROUPS; g++) {
-        ViewerMarkGroup *group = mark_manager->groups[g];
-        for (unsigned int m = 0; group != NULL && m < NUM_MARKS; m++) {
-            if (group->marks[m] != NULL) {
-                viewport_settle(win->viewer->viewport, group->marks[m]);
-            }
-        }
-    }
+    settle_marks(mark_manager, win->viewer->viewport);
 
     win->outline_panel = outline_panel_new(outline_read(info),
         window_on_outline_activated, win);
@@ -236,6 +228,40 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     poppler_page_get_size(viewer_info_get_poppler_page(win->viewer->info, 0), &default_width, &default_height);
     gtk_window_set_default_size(GTK_WINDOW(win), (int)default_width,
         (int)default_width);
+}
+
+void window_reload(Window *win, GBytes *bytes)
+{
+    GError *error = NULL;
+    ViewerInfo *info = viewer_info_new_from_bytes(bytes, &error);
+    Viewer *old_viewer = win->viewer;
+    Renderer *old_renderer = win->renderer;
+    const ViewportRules rules = window_viewport_rules();
+    Search *search;
+    ViewportSize view;
+
+    if (info == NULL) {
+        g_printerr("Error reloading %s: %s\n", win->uri, error->message);
+        g_error_free(error);
+        return;
+    }
+
+    search = search_new(info, &search_callbacks, win);
+    search_restore_query(search, search_query(old_viewer->search),
+        viewer_current_mark(old_viewer)->current_page);
+
+    win->viewer = viewer_new(info, win->selection, search, &rules);
+    view = viewport_get_view_size(old_viewer->viewport);
+    viewport_set_view_size(win->viewer->viewport, view.width, view.height);
+    settle_marks(win->mark_manager, win->viewer->viewport);
+
+    win->renderer = renderer_new(win->view, win->viewer);
+    renderer_take_surfaces(win->renderer, old_renderer);
+    renderer_destroy(old_renderer);
+    viewer_destroy(old_viewer);
+
+    outline_panel_set_entries(win->outline_panel, outline_read(info));
+    window_redraw(win);
 }
 
 void window_redraw(Window *win)
@@ -345,6 +371,11 @@ ViewerMarkManager *window_get_mark_manager(Window *win)
     return win->mark_manager;
 }
 
+const char *window_get_uri(Window *win)
+{
+    return win->uri;
+}
+
 static void window_redraw_document_windows(Window *win)
 {
     app_redraw_windows(win->app, win->mark_manager);
@@ -391,9 +422,35 @@ static void window_handle_request(Window *win, InputRequest request)
     case INPUT_REQUEST_OPEN_FILE:
         app_open_file_chooser(win->app);
         break;
+    case INPUT_REQUEST_RELOAD:
+        app_reload_document(win->app, win->uri);
+        break;
     case INPUT_REQUEST_TOGGLE_FULLSCREEN:
         window_toggle_fullscreen(win);
         break;
+    }
+}
+
+static ViewportRules window_viewport_rules(void)
+{
+    return (ViewportRules){
+        .steps = g_config->steps,
+        .min_scale = g_config->min_scale,
+        .scale_step = g_config->scale_step,
+        .max_page_pixels = RENDERER_MAX_PAGE_PIXELS,
+    };
+}
+
+static void settle_marks(ViewerMarkManager *mark_manager,
+    const Viewport *viewport)
+{
+    for (unsigned int g = 0; g < NUM_GROUPS; g++) {
+        ViewerMarkGroup *group = mark_manager->groups[g];
+        for (unsigned int m = 0; group != NULL && m < NUM_MARKS; m++) {
+            if (group->marks[m] != NULL) {
+                viewport_settle(viewport, group->marks[m]);
+            }
+        }
     }
 }
 

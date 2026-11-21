@@ -11,8 +11,9 @@ typedef struct ViewerInfo {
 } ViewerInfo;
 
 ViewerInfo *viewer_info_new(PopplerDocument *doc);
-ViewerInfo *viewer_info_new_from_gfile(GFile *file);
-bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc);
+ViewerInfo *viewer_info_new_from_bytes(GBytes *bytes, GError **error);
+/* Returns false with `error` set if `doc` has no pages or a page can't be read */
+bool viewer_info_init(ViewerInfo *info, PopplerDocument *doc, GError **error);
 void viewer_info_destroy(ViewerInfo *info);
 
 void viewer_info_lock(ViewerInfo *info);

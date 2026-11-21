@@ -6,8 +6,12 @@
 #include "config.h"
 #include "utils.h"
 #include "mark_store.h"
+#include "document.h"
 
 static void window_redraw_cb(gpointer win_ptr, gpointer manager_ptr);
+static ViewerInfo *open_viewer_info(App *app, GFile *file);
+static gboolean app_has_window_on(App *app, const char *uri);
+static void on_document_reloaded(Document *document, gpointer user_data);
 static void save_all_documents(App *app);
 
 static void on_file_dialog_response(GObject *source_object, GAsyncResult *res, gpointer user_data);
@@ -16,13 +20,18 @@ struct _App {
     GtkApplication parent;
 
     /*
-    * Key: URI
-    * Value: ViewerMarkManager *
-    * NOTE: one Mark Manager per document, shared by every window on it.
-    * Each window attaches its own Group selection. Kept from first open
-    * until exit, so closing a window only detaches its selection.
-    */
+     * Key: URI
+     * Value: ViewerMarkManager *
+     * One Mark Manager per document, shared by every  window on it.
+     * Each window attaches its own Group selection. Kept  from first open
+     * until exit, so closing a window only detaches its  selection.
+     */
     GHashTable *uri_mark_manager_map;
+    /*
+     * Key: URI
+     * Value: Document *
+     */
+    GHashTable *uri_document_map;
     GPtrArray *windows;
     MarkStore *mark_store;
 };
@@ -41,6 +50,7 @@ int app_run(int argc, char *argv[])
 static void app_init(App *app)
 {
     app->uri_mark_manager_map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)viewer_mark_manager_destroy);
+    app->uri_document_map = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, (GDestroyNotify)document_free);
     app->windows = g_ptr_array_new();
 }
 
@@ -79,6 +89,7 @@ static void app_finalize(GObject *object)
 {
     App *app = JUMPDF_APP(object);
 
+    g_hash_table_destroy(app->uri_document_map);
     g_hash_table_destroy(app->uri_mark_manager_map);
 
     g_ptr_array_free(app->windows, TRUE);
@@ -109,7 +120,7 @@ static void app_open(GApplication *app, GFile **files, int n_files,
     GPtrArray *new_windows = g_ptr_array_sized_new(n_files);
 
     for (int i = 0; i < n_files; i++) {
-        info = viewer_info_new_from_gfile(files[i]);
+        info = open_viewer_info(JUMPDF_APP(app), files[i]);
         if (info == NULL) {
             continue;
         }
@@ -161,7 +172,13 @@ ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
 
 void app_remove_window(App *app, Window *win)
 {
+    const char *uri = window_get_uri(win);
+
     g_ptr_array_remove_fast(app->windows, win);
+
+    if (uri != NULL && !app_has_window_on(app, uri)) {
+        g_hash_table_remove(app->uri_document_map, uri);
+    }
 }
 
 void app_redraw_windows(App *app, ViewerMarkManager *manager)
@@ -175,6 +192,15 @@ void app_save_document(App *app, const char *uri)
 
     if (manager != NULL) {
         mark_store_save(app->mark_store, uri, manager);
+    }
+}
+
+void app_reload_document(App *app, const char *uri)
+{
+    Document *document = g_hash_table_lookup(app->uri_document_map, uri);
+
+    if (document != NULL) {
+        document_reload(document);
     }
 }
 
@@ -199,6 +225,66 @@ static void window_redraw_cb(gpointer win_ptr, gpointer manager_ptr)
 
     if (window_get_mark_manager(win) == manager_ptr) {
         window_redraw(win);
+    }
+}
+
+static ViewerInfo *open_viewer_info(App *app, GFile *file)
+{
+    GError *error = NULL;
+    char *uri = g_file_get_uri(file);
+    Document *document = g_hash_table_lookup(app->uri_document_map, uri);
+    const gboolean newly_opened = document == NULL;
+    ViewerInfo *info;
+
+    if (newly_opened) {
+        document = document_open(file, g_config->auto_reload,
+            on_document_reloaded, app, &error);
+        if (document == NULL) {
+            g_printerr("Error opening document: %s\n", error->message);
+            g_error_free(error);
+            g_free(uri);
+            return NULL;
+        }
+        g_hash_table_insert(app->uri_document_map,
+            (gpointer)document_uri(document), document);
+    }
+
+    info = viewer_info_new_from_bytes(document_bytes(document), &error);
+    if (info == NULL) {
+        g_printerr("Error opening document: %s\n", error->message);
+        g_error_free(error);
+        if (newly_opened) {
+            g_hash_table_remove(app->uri_document_map, uri);
+        }
+    }
+
+    g_free(uri);
+
+    return info;
+}
+
+static gboolean app_has_window_on(App *app, const char *uri)
+{
+    for (guint i = 0; i < app->windows->len; i++) {
+        if (g_strcmp0(window_get_uri(g_ptr_array_index(app->windows, i)),
+                uri) == 0) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static void on_document_reloaded(Document *document, gpointer user_data)
+{
+    App *app = user_data;
+
+    for (guint i = 0; i < app->windows->len; i++) {
+        Window *win = g_ptr_array_index(app->windows, i);
+
+        if (g_strcmp0(window_get_uri(win), document_uri(document)) == 0) {
+            window_reload(win, document_bytes(document));
+        }
     }
 }
 

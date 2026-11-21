@@ -24,6 +24,12 @@ G_DEFINE_TYPE(OutlinePanel, outline_panel, GTK_TYPE_WIDGET)
 
 static GtkListBoxRow *outline_panel_visible_row(OutlinePanel *self, int index,
     int step);
+static void outline_panel_append_rows(OutlinePanel *self);
+static void outline_panel_apply_filter(OutlinePanel *self);
+static int outline_panel_visible_position(OutlinePanel *self,
+    GtkListBoxRow *row);
+static GtkListBoxRow *outline_panel_nth_visible_row(OutlinePanel *self, int n);
+static void outline_panel_select(OutlinePanel *self, GtkListBoxRow *row);
 static void on_filter_changed(GtkSearchEntry *filter, gpointer user_data);
 static void on_filter_stopped(GtkSearchEntry *filter, gpointer user_data);
 static void on_row_activated(GtkListBox *list, GtkListBoxRow *row,
@@ -126,21 +132,52 @@ static GtkWidget *outline_panel_row_new(const OutlineEntry *entry)
     return box;
 }
 
+static void outline_panel_append_rows(OutlinePanel *self)
+{
+    for (guint i = 0; i < self->entries->len; i++) {
+        gtk_list_box_append(GTK_LIST_BOX(self->list), outline_panel_row_new(
+            &g_array_index(self->entries, OutlineEntry, i)));
+    }
+}
+
 static void outline_panel_build_rows(OutlinePanel *self)
 {
     GtkListBox *list = GTK_LIST_BOX(self->list);
     GtkListBoxRow *first;
 
-    for (guint i = 0; i < self->entries->len; i++) {
-        gtk_list_box_append(list, outline_panel_row_new(
-            &g_array_index(self->entries, OutlineEntry, i)));
-    }
+    outline_panel_append_rows(self);
 
     first = gtk_list_box_get_row_at_index(list, 0);
     if (first != NULL) {
         gtk_list_box_select_row(list, first);
     }
     self->rows_built = true;
+}
+
+void outline_panel_set_entries(OutlinePanel *panel, GArray *entries)
+{
+    GtkListBox *list = GTK_LIST_BOX(panel->list);
+    GtkListBoxRow *selected;
+    int position;
+
+    if (!panel->rows_built) {
+        g_clear_pointer(&panel->entries, g_array_unref);
+        panel->entries = entries;
+        return;
+    }
+
+    selected = gtk_list_box_get_selected_row(list);
+    position = selected != NULL
+        ? outline_panel_visible_position(panel, selected) : 0;
+
+    gtk_list_box_remove_all(list);
+    g_clear_pointer(&panel->entries, g_array_unref);
+    panel->entries = entries;
+    outline_panel_append_rows(panel);
+    outline_panel_apply_filter(panel);
+
+    outline_panel_select(panel,
+        outline_panel_nth_visible_row(panel, position));
 }
 
 void outline_panel_set_open(OutlinePanel *panel, bool open)
@@ -211,11 +248,10 @@ void outline_panel_focus_filter(OutlinePanel *panel)
     gtk_widget_grab_focus(panel->filter);
 }
 
-static void on_filter_changed(GtkSearchEntry *filter, gpointer user_data)
+static void outline_panel_apply_filter(OutlinePanel *self)
 {
-    OutlinePanel *self = user_data;
     GtkListBox *list = GTK_LIST_BOX(self->list);
-    const char *text = gtk_editable_get_text(GTK_EDITABLE(filter));
+    const char *text = gtk_editable_get_text(GTK_EDITABLE(self->filter));
     GtkListBoxRow *row;
     const char *title;
 
@@ -225,13 +261,59 @@ static void on_filter_changed(GtkSearchEntry *filter, gpointer user_data)
         gtk_widget_set_visible(GTK_WIDGET(row),
             strcasestr(title, text) != NULL);
     }
+}
 
-    row = outline_panel_visible_row(self, 0, 1);
-    if (row != NULL) {
-        gtk_list_box_select_row(list, row);
-    } else {
-        gtk_list_box_unselect_all(list);
+static int outline_panel_visible_position(OutlinePanel *self,
+    GtkListBoxRow *row)
+{
+    const int index = gtk_list_box_row_get_index(row);
+    int position = 0;
+
+    for (int i = 0; i < index; i++) {
+        position += gtk_widget_get_visible(GTK_WIDGET(
+            gtk_list_box_get_row_at_index(GTK_LIST_BOX(self->list), i)));
     }
+
+    return position;
+}
+
+static GtkListBoxRow *outline_panel_nth_visible_row(OutlinePanel *self, int n)
+{
+    GtkListBoxRow *found = NULL;
+    GtkListBoxRow *row;
+
+    for (int i = 0;
+         (row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(self->list), i))
+            != NULL;
+         i++) {
+        if (gtk_widget_get_visible(GTK_WIDGET(row))) {
+            found = row;
+            if (n-- == 0) {
+                break;
+            }
+        }
+    }
+
+    return found;
+}
+
+static void outline_panel_select(OutlinePanel *self, GtkListBoxRow *row)
+{
+    if (row != NULL) {
+        gtk_list_box_select_row(GTK_LIST_BOX(self->list), row);
+    } else {
+        gtk_list_box_unselect_all(GTK_LIST_BOX(self->list));
+    }
+}
+
+static void on_filter_changed(GtkSearchEntry *filter, gpointer user_data)
+{
+    UNUSED(filter);
+
+    OutlinePanel *self = user_data;
+
+    outline_panel_apply_filter(self);
+    outline_panel_select(self, outline_panel_visible_row(self, 0, 1));
 }
 
 static void on_filter_stopped(GtkSearchEntry *filter, gpointer user_data)

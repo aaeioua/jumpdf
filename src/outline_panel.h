@@ -18,6 +18,7 @@ typedef void (*OutlinePanelActivated)(ViewerTarget target, gpointer user_data);
 /* Takes ownership of `entries` (an array of OutlineEntry). Starts closed. */
 OutlinePanel *outline_panel_new(GArray *entries,
     OutlinePanelActivated activated, gpointer user_data);
+void outline_panel_set_entries(OutlinePanel *panel, GArray *entries);
 void outline_panel_set_open(OutlinePanel *panel, bool open);
 /* Selects the next (1) or previous (-1) visible row; stays put at either end */
 void outline_panel_step(OutlinePanel *panel, int step);

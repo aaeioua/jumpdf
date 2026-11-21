@@ -112,6 +112,9 @@ Show/hide search dialog. Enter goes to the first page from the current one that 
 .B o
 Open file chooser.
 .TP
+.B R
+Reload the document.
+.TP
 .B Tab
 Toggle table of contents.
 .RS

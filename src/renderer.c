@@ -14,6 +14,10 @@ typedef struct {
     GMutex mutex;
     /* The last render published, at surface_scale; NULL if none */
     cairo_surface_t *surface;
+    /*
+     * 0 for a surface taken from another renderer's version of the
+     * document, which is old at every scale
+     */
     double surface_scale;
     /* 0 while the page is not wanted */
     double wanted_scale;
@@ -131,6 +135,36 @@ void renderer_destroy(Renderer *renderer)
     g_weak_ref_clear(&renderer->redraw_target);
     g_mutex_clear(&renderer->pool_mutex);
     g_free(renderer);
+}
+
+void renderer_take_surfaces(Renderer *to, Renderer *from)
+{
+    const int last = MIN(from->last_wanted_to, to->page_count - 1);
+
+    g_assert(to->last_wanted_from == -1);
+
+    if (from->last_wanted_from == -1 || from->last_wanted_from > last) {
+        return;
+    }
+
+    for (int i = from->last_wanted_from; i <= last; i++) {
+        RendererPageState *from_state = &from->page_states[i];
+        RendererPageState *to_state = &to->page_states[i];
+
+        g_mutex_lock(&from_state->mutex);
+        cairo_surface_t *surface = g_steal_pointer(&from_state->surface);
+        from_state->surface_scale = 0;
+        g_mutex_unlock(&from_state->mutex);
+
+        g_mutex_lock(&to_state->mutex);
+        to_state->surface = surface;
+        to_state->surface_scale = 0;
+        g_mutex_unlock(&to_state->mutex);
+    }
+
+    /* So `to`'s first draw drops the taken pages it doesn't want */
+    to->last_wanted_from = from->last_wanted_from;
+    to->last_wanted_to = last;
 }
 
 gboolean renderer_draw(Renderer *renderer, cairo_t *cr, gboolean link_numbers)

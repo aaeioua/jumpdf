@@ -48,6 +48,7 @@ typedef enum {
     COMMAND_REPEAT_JUMP,
     COMMAND_SHOW_SEARCH,
     COMMAND_OPEN_FILE,
+    COMMAND_RELOAD,
     COMMAND_TOGGLE_OUTLINE,
     COMMAND_OUTLINE_NEXT,
     COMMAND_OUTLINE_PREVIOUS,
@@ -135,6 +136,7 @@ static const Binding bindings[] = {
     {COMMAND_REPEAT_JUMP, {","}, "Repeat the last jump command (mn or gn)", 0, NORMAL, 0},
     {COMMAND_SHOW_SEARCH, {"/"}, "Show search dialog (Enter searches, Esc hides it)", 0, NORMAL, 0},
     {COMMAND_OPEN_FILE, {"o"}, "Open file chooser", 0, NORMAL, 0},
+    {COMMAND_RELOAD, {"R"}, "Reload the document", 0, NORMAL, 0},
     {COMMAND_TOGGLE_OUTLINE, {"Tab"}, "Toggle table of contents", 0, NORMAL | OUTLINE, 0},
     {COMMAND_OUTLINE_NEXT, {"j"}, "Move down in table of contents", 1, OUTLINE, 0},
     {COMMAND_OUTLINE_PREVIOUS, {"k"}, "Move up in table of contents", 1, OUTLINE, 0},
@@ -597,6 +599,8 @@ static InputRequest execute(Input *input, Viewer *viewer, Command command)
         return INPUT_REQUEST_SHOW_SEARCH;
     case COMMAND_OPEN_FILE:
         return INPUT_REQUEST_OPEN_FILE;
+    case COMMAND_RELOAD:
+        return INPUT_REQUEST_RELOAD;
     case COMMAND_TOGGLE_OUTLINE:
         if (input->mode == MODE_OUTLINE) {
             input->mode = MODE_NORMAL;

@@ -61,7 +61,11 @@ void search_free(Search *search);
  * `from_page`, so it ends without `found` when `from_page` matches.
  */
 void search_set_query(Search *search, const char *query, int from_page);
-/* NULL when there is none. Valid until the next search_set_query. */
+/*
+ * As search_set_query, but starts no seek, so the Mark stays where it is.
+ * For carrying a query over to a new version of the document.
+ */
+void search_restore_query(Search *search, const char *query, int from_page);
 const char *search_query(const Search *search);
 
 /*

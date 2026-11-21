@@ -56,6 +56,16 @@ Default value: 0.1
 .RE
 
 .TP
+.B auto_reload
+Description: Reloads a document when its file changes
+.RS
+Value type: Boolean
+.RE
+.RS
+Default value: false
+.RE
+
+.TP
 .B statusline_separator
 Description: Defines the separator used in the status line.
 .RS
