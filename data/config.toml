@@ -1,12 +1,11 @@
 [Settings]
-file_chooser_initial_folder_path = "~/Documents"
-steps = 15
-min_scale = 0.3
-scale_step = 0.1
-auto_reload = false
+# file_chooser_initial_folder_path = "~/Documents"
+# steps = 15
+# min_scale = 0.3
+# scale_step = 0.1
+# auto_reload = false
 
-# Possible components: ["Page", "Center mode", "Scale", "Mark selection", "Pending keys", "Search"]
-statusline_separator = " | "
-statusline_left = ["Page", "Search", "Pending keys"]
-statusline_middle = []
-statusline_right = ["Center mode", "Scale", "Mark selection"]
+# statusline_separator = " | "
+# statusline_left = ["Page", "Search", "Pending keys"]
+# statusline_middle = []
+# statusline_right = ["Center mode", "Scale", "Mark selection"]

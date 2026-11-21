@@ -126,9 +126,4 @@ jumpdf <pdf_file1> <pdf_file2> ...
 
 ### Configuration
 
-```sh
-# Copy default configuration file
-mkdir -p ~/.config/jumpdf && cp data/config.toml "$_"
-# For flatpak installations
-mkdir -p ~/.var/app/io.github.b43NnUNF4vidFYFhpqaLWy2ANawtRbMtUXZY9Pf.jumpdf/config/jumpdf && cp data/config.toml "$_"
-```
+See [docs/configuration.md](docs/configuration.md).

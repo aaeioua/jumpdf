@@ -3,6 +3,7 @@ conf.set('app_name', app_name)
 conf.set('app_version', app_version)
 conf.set('app_id', app_id)
 conf.set('developer_id', developer_id)
+conf.set('datadir', get_option('prefix') / get_option('datadir'))
 
 desktop_conf = configure_file(
     input: 'app.desktop.in',
@@ -58,13 +59,8 @@ man_file = configure_file(
     configuration: conf
 )
 
-man_config_file = configure_file(
-    input: 'appconfig.5.in',
-    output: '@0@config.5'.format(app_name),
-    configuration: conf
-)
+install_man(man_file)
 
-install_man([
-    man_file,
-    man_config_file
-])
+install_data('config.toml',
+    install_dir : get_option('datadir') / app_name
+)
