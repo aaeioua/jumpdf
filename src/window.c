@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <cairo.h>
 #include <gtk/gtk.h>
-#include <poppler.h>
 #include <stdbool.h>
 
 #include "window.h"
@@ -84,6 +83,7 @@ struct _Window {
     Viewer *viewer;
     Renderer *renderer;
     Input *input;
+    bool fit_width_once_sized;
 };
 
 G_DEFINE_TYPE(Window, window, GTK_TYPE_APPLICATION_WINDOW)
@@ -97,6 +97,7 @@ static void window_init(Window *win)
     win->renderer = NULL;
     win->input = input_new();
     win->outline_panel = NULL;
+    win->fit_width_once_sized = false;
 
     win->event_controller = gtk_event_controller_key_new();
     g_signal_connect_object(win->event_controller, "key-pressed",
@@ -196,7 +197,6 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     GError *error = NULL;
     Search *search;
     GFileInfo *file_info;
-    double default_width, default_height;
     const ViewportRules rules = window_viewport_rules();
 
     search = search_new(info, &search_callbacks, win);
@@ -224,10 +224,11 @@ void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
         gtk_window_set_title(GTK_WINDOW(win), g_file_info_get_display_name(file_info));
         g_object_unref(file_info);
     }
+}
 
-    poppler_page_get_size(viewer_info_get_poppler_page(win->viewer->info, 0), &default_width, &default_height);
-    gtk_window_set_default_size(GTK_WINDOW(win), (int)default_width,
-        (int)default_width);
+void window_fit_width_once_sized(Window *win)
+{
+    win->fit_width_once_sized = true;
 }
 
 void window_reload(Window *win, GBytes *bytes)
@@ -543,6 +544,13 @@ static void on_resize(GtkDrawingArea *area, int width, int height,
     win = (Window *)user_data;
 
     viewport_set_view_size(win->viewer->viewport, width, height);
+
+    if (win->fit_width_once_sized && width > 0) {
+        win->fit_width_once_sized = false;
+        viewport_fit_width(win->viewer->viewport,
+            viewer_current_mark(win->viewer));
+        window_redraw_document_windows(win);
+    }
 }
 
 static void draw_function(GtkDrawingArea *area, cairo_t *cr, int width,

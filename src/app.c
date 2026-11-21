@@ -7,8 +7,13 @@
 #include "utils.h"
 #include "mark_store.h"
 #include "document.h"
+#include "window_state.h"
 
 static void window_redraw_cb(gpointer win_ptr, gpointer manager_ptr);
+static void track_window_state(App *app, GtkWindow *win);
+static void on_window_state_changed(GObject *win, GParamSpec *pspec,
+    gpointer user_data);
+static void save_window_state(App *app);
 static ViewerInfo *open_viewer_info(App *app, GFile *file);
 static gboolean app_has_window_on(App *app, const char *uri);
 static void on_document_reloaded(Document *document, gpointer user_data);
@@ -34,6 +39,10 @@ struct _App {
     GHashTable *uri_document_map;
     GPtrArray *windows;
     MarkStore *mark_store;
+
+    WindowState window_state;
+    gboolean window_state_changed;
+    gchar *window_state_path;
 };
 
 G_DEFINE_TYPE(App, app, GTK_TYPE_APPLICATION)
@@ -72,12 +81,18 @@ static void app_startup(GApplication *application)
         g_error_free(error);
     }
     g_free(store_path);
+
+    app->window_state_path = g_build_filename(g_get_user_state_dir(),
+        APP_NAME_STR, "window-state.ini", NULL);
+    app->window_state = window_state_load(app->window_state_path);
+    app->window_state_changed = FALSE;
 }
 
 static void app_shutdown(GApplication *application)
 {
     App *app = JUMPDF_APP(application);
 
+    save_window_state(app);
     save_all_documents(app);
     mark_store_close(app->mark_store);
     app->mark_store = NULL;
@@ -93,6 +108,7 @@ static void app_finalize(GObject *object)
     g_hash_table_destroy(app->uri_mark_manager_map);
 
     g_ptr_array_free(app->windows, TRUE);
+    g_free(app->window_state_path);
 
     /* NULL in a process that only forwarded files */
     if (g_config != NULL) {
@@ -116,6 +132,7 @@ static void app_open(GApplication *app, GFile **files, int n_files,
 
     ViewerInfo *info;
     ViewerMarkManager *mark_manager;
+    gboolean new_marks;
     Window *win;
     GPtrArray *new_windows = g_ptr_array_sized_new(n_files);
 
@@ -125,11 +142,16 @@ static void app_open(GApplication *app, GFile **files, int n_files,
             continue;
         }
 
-        mark_manager = app_get_mark_manager(JUMPDF_APP(app), files[i]);
+        mark_manager = app_get_mark_manager(JUMPDF_APP(app), files[i],
+            &new_marks);
         win = window_new(JUMPDF_APP(app));
         g_ptr_array_add(new_windows, win);
+        track_window_state(JUMPDF_APP(app), GTK_WINDOW(win));
 
         window_open(win, files[i], mark_manager, info);
+        if (new_marks) {
+            window_fit_width_once_sized(win);
+        }
         gtk_window_present(GTK_WINDOW(win));
     }
 
@@ -151,10 +173,13 @@ App *app_new(void)
         G_APPLICATION_HANDLES_OPEN, NULL);
 }
 
-ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
+ViewerMarkManager *app_get_mark_manager(App *app, GFile *file,
+    gboolean *created)
 {
     char *uri = g_file_get_uri(file);
     ViewerMarkManager *mark_manager = g_hash_table_lookup(app->uri_mark_manager_map, uri);
+
+    *created = FALSE;
 
     if (mark_manager != NULL) {
         g_free(uri);
@@ -163,6 +188,7 @@ ViewerMarkManager *app_get_mark_manager(App *app, GFile *file)
 
     if (mark_store_load(app->mark_store, uri, &mark_manager) != MARK_STORE_FOUND) {
         mark_manager = viewer_mark_manager_new_default();
+        *created = TRUE;
     }
 
     g_hash_table_insert(app->uri_mark_manager_map, uri, mark_manager);
@@ -179,6 +205,8 @@ void app_remove_window(App *app, Window *win)
     if (uri != NULL && !app_has_window_on(app, uri)) {
         g_hash_table_remove(app->uri_document_map, uri);
     }
+
+    save_window_state(app);
 }
 
 void app_redraw_windows(App *app, ViewerMarkManager *manager)
@@ -226,6 +254,51 @@ static void window_redraw_cb(gpointer win_ptr, gpointer manager_ptr)
     if (window_get_mark_manager(win) == manager_ptr) {
         window_redraw(win);
     }
+}
+
+static void track_window_state(App *app, GtkWindow *win)
+{
+    window_state_apply(&app->window_state, win);
+
+    g_signal_connect(win, "notify::default-width",
+        G_CALLBACK(on_window_state_changed), app);
+    g_signal_connect(win, "notify::default-height",
+        G_CALLBACK(on_window_state_changed), app);
+    g_signal_connect(win, "notify::maximized",
+        G_CALLBACK(on_window_state_changed), app);
+}
+
+static void on_window_state_changed(GObject *win, GParamSpec *pspec,
+    gpointer user_data)
+{
+    UNUSED(pspec);
+
+    App *app = user_data;
+    const WindowState state = window_state_of(GTK_WINDOW(win));
+
+    if (state.width != app->window_state.width ||
+        state.height != app->window_state.height ||
+        state.maximized != app->window_state.maximized) {
+        app->window_state = state;
+        app->window_state_changed = TRUE;
+    }
+}
+
+static void save_window_state(App *app)
+{
+    GError *error = NULL;
+
+    if (!app->window_state_changed || app->window_state_path == NULL) {
+        return;
+    }
+
+    if (!window_state_save(app->window_state_path, &app->window_state,
+            &error)) {
+        g_printerr("The window size was not saved: %s\n", error->message);
+        g_error_free(error);
+    }
+
+    app->window_state_changed = FALSE;
 }
 
 static ViewerInfo *open_viewer_info(App *app, GFile *file)

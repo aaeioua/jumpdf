@@ -14,6 +14,7 @@ G_DECLARE_FINAL_TYPE(Window, window, JUMPDF, WINDOW, GtkApplicationWindow)
 Window *window_new(App *app);
 void window_open(Window *win, GFile *file, ViewerMarkManager *mark_manager,
     ViewerInfo *info);
+void window_fit_width_once_sized(Window *win);
 
 void window_redraw(Window *win);
 

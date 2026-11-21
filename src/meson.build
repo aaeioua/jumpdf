@@ -5,6 +5,7 @@ sources = [
     'utils.c',
     'app.c',
     'window.c',
+    'window_state.c',
     'statusline.c',
     'outline.c',
     'outline_panel.c',

@@ -13,10 +13,13 @@ App *app_new(void);
 
 /*
  * The one Mark Manager for the document, shared by every window on it. The
- * first call loads it from the Mark store, or creates the default. The app
- * owns it until exit; windows attach and detach Group selections.
+ * first call loads it from the Mark store, or creates the default and sets
+ * `*created`. The app owns it until exit; windows attach and detach Group
+ * selections.
  */
-ViewerMarkManager *app_get_mark_manager(App *app, GFile *file);
+ViewerMarkManager *app_get_mark_manager(App *app, GFile *file,
+    gboolean *created);
+/* Forgets a closed window, and saves the window state if it changed */
 void app_remove_window(App *app, Window *win);
 /* Redraws every window whose Group selection belongs to `manager` */
 void app_redraw_windows(App *app, ViewerMarkManager *manager);
